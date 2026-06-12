@@ -1,7 +1,26 @@
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
-CHAPTER_PATTERN = re.compile(r'^(?:第[一二三四五六七八九十百千\d]+[章节部集]|[Vv][oO][lL]\.?\s*\d+|前言|序章|尾声|后记|番外)')
+
+# ─── Chapter patterns ──────────────────────────────────────────────
+# Chinese: 第X章/节/部/集/卷/篇 (X = digits or Chinese numbers)
+_CH_NUM = r'[一二三四五六七八九十百千万零\d]+'
+CHINESE_CH = rf'第{_CH_NUM}[章节部集卷篇]'
+
+# English: Chapter X / Chap. X / Part X / Volume X
+ENGLISH_CH = r'(?:Chapter|Chap\.?|Ch\.?|Part|Volume|Vol\.?|Book)\s*\d+'
+
+# Special markers
+SPECIAL_CH = r'(?:序章|前言|后记|尾声|番外|楔子|引子|序幕|终章|完结|后记|番外篇|特别篇)'
+
+# Combined: must match at line start, capture the full title
+CHAPTER_PATTERN = re.compile(
+    rf'^(?:{CHINESE_CH}|{ENGLISH_CH}|{SPECIAL_CH})'
+    rf'(?:[\s:：.．\-—]+.*)?$',
+    re.IGNORECASE
+)
+
+# ─── Dialogue patterns ─────────────────────────────────────────────
 DIALOGUE_JP = re.compile(r'「([^」]*)」[—－\-—\s]*(.+?)$')
 DIALOGUE_CN = re.compile(r'「([^」]*)」[\s　]*$')
 SPEAKER_PREFIX = re.compile(r'^(.+?)：[「『]')
@@ -64,3 +83,20 @@ def parse(text: str) -> Tuple[List[dict], List[str]]:
 
     character_list = sorted(characters, key=lambda x: -sum(1 for d in dialogues if d.get("speaker") == x))
     return dialogues, character_list
+
+
+def extract_chapters(text: str) -> List[Dict]:
+    """Extract all chapter markers from text.
+
+    Returns a list of dicts: [{"title": str, "line_number": int}]
+    line_number is 1-based.
+    """
+    chapters = []
+    for i, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        m = CHAPTER_PATTERN.match(stripped)
+        if m:
+            chapters.append({"title": stripped, "line_number": i})
+    return chapters

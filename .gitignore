@@ -24,3 +24,6 @@ backend/data/output/
 
 # Logs
 *.log
+
+# Local config (contains server IPs)
+ip_config
