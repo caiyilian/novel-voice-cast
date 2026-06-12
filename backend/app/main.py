@@ -1,14 +1,20 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from app.config import CORS_ORIGINS
-from app.database import engine, Base
+from app.config import CORS_ORIGINS, UPLOAD_DIR, PRESET_DIR
+from app.database import engine
+from app.models import Base
+from app.api.project import router as project_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    PRESET_DIR.mkdir(parents=True, exist_ok=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
@@ -24,6 +30,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(project_router)
+
+app.mount("/audio", StaticFiles(directory=str(UPLOAD_DIR)), name="audio")
+app.mount("/presets", StaticFiles(directory=str(PRESET_DIR)), name="presets")
 
 
 @app.get("/health")
