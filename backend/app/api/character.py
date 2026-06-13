@@ -1,12 +1,15 @@
-from typing import Optional
+from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Project, Character, Dialogue
 from app.schemas import CharacterInfo, CharacterList, CharacterUpdate, DialogueInfo, DialogueList
+from app.core.gender_identifier import identify_all_genders
+from app.core.ollama_client import OllamaClient, OllamaConfig
 
 router = APIRouter(prefix="/api/project/{project_id}/characters", tags=["character"])
 
@@ -113,4 +116,68 @@ async def list_character_dialogues(
         character_name=character_name,
         dialogues=[DialogueInfo.model_validate(d) for d in dialogues],
         total_dialogues=len(dialogues),
+    )
+
+
+class GenderResult(BaseModel):
+    character_name: str
+    gender: str
+    confidence: float
+    evidence: str
+
+
+class GenderIdentificationResult(BaseModel):
+    project_id: int
+    results: List[GenderResult]
+    total_characters: int
+    identified: int
+
+
+@router.post("/identify-genders", response_model=GenderIdentificationResult)
+async def identify_genders(
+    project_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Identify gender for all characters in the project.
+
+    Requires uploading the novel text file for context analysis.
+    """
+    project = await _verify_project(project_id, db)
+
+    # read novel text
+    content = await file.read()
+    text = content.decode("utf-8")
+
+    # get all characters
+    result = await db.execute(
+        select(Character).where(Character.project_id == project_id)
+    )
+    characters = result.scalars().all()
+
+    if not characters:
+        raise HTTPException(400, "No characters found. Upload a novel first.")
+
+    # identify genders
+    client = OllamaClient()
+    character_names = [c.name for c in characters]
+    gender_results = identify_all_genders(character_names, text, client, max_tool_steps=8)
+
+    # update database
+    identified = 0
+    for gr in gender_results:
+        for char in characters:
+            if char.name == gr["character_name"]:
+                char.gender = gr["gender"]
+                if gr["confidence"] >= 0.5:
+                    identified += 1
+                break
+
+    await db.commit()
+
+    return GenderIdentificationResult(
+        project_id=project_id,
+        results=[GenderResult(**gr) for gr in gender_results],
+        total_characters=len(characters),
+        identified=identified,
     )
