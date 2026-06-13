@@ -30,3 +30,6 @@ ip_config
 
 # Test audio files
 backend/tests/fixtures/*.wav
+
+# Large model files (IndexTTS2)
+backend/models/
