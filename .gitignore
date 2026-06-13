@@ -27,3 +27,6 @@ backend/data/output/
 
 # Local config (contains server IPs)
 ip_config
+
+# Test audio files
+backend/tests/fixtures/*.wav

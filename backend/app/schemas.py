@@ -82,3 +82,21 @@ class DialogueList(BaseModel):
     character_name: str
     dialogues: List[DialogueInfo]
     total_dialogues: int
+
+
+class AudioUploadResult(BaseModel):
+    id: int
+    character_name: str
+    file_path: str
+    source: str
+
+
+class AudioInfo(BaseModel):
+    id: int
+    file_path: str
+    source: str
+    character_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
