@@ -11,6 +11,7 @@ from app.models import Base
 from app.api.project import router as project_router
 from app.api.character import router as character_router
 from app.api.audio import router as audio_router
+from app.api.presets import router as presets_router
 
 
 @asynccontextmanager
@@ -36,6 +37,7 @@ app.add_middleware(
 app.include_router(project_router)
 app.include_router(character_router)
 app.include_router(audio_router)
+app.include_router(presets_router)
 
 app.mount("/audio", StaticFiles(directory=str(UPLOAD_DIR)), name="audio")
 app.mount("/presets", StaticFiles(directory=str(PRESET_DIR)), name="presets")
