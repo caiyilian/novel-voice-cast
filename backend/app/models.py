@@ -55,6 +55,8 @@ class Dialogue(Base):
     speaker: Mapped[str] = mapped_column(String(255))
     order: Mapped[int] = mapped_column(Integer)
     project_id: Mapped[int] = mapped_column(Integer, ForeignKey("projects.id"))
+    emotion: Mapped[str] = mapped_column(String(50), default="unknown")
+    tone: Mapped[str] = mapped_column(String(50), default="unknown")
 
     project: Mapped["Project"] = relationship("Project", back_populates="dialogues")
 
