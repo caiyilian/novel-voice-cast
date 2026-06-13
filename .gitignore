@@ -31,5 +31,6 @@ ip_config
 # Test audio files
 backend/tests/fixtures/*.wav
 
-# Large model files (IndexTTS2)
+# Large model files (IndexTTS2 + VoxCPM)
 backend/models/
+whl_files/

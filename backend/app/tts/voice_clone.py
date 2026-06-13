@@ -2,15 +2,16 @@
 VoxCPM2 TTS Provider — 音色克隆引擎对接
 
 依赖:
-  - voxcpm 包（pip install -e /path/to/VoxCPM）
+  - voxcpm 包（本地 models/voxcpm 目录）
   - PyTorch + CUDA
-  - 模型文件位于 VoxCPM2/ 目录
+  - 模型文件位于 models/VoxCPM2/ 目录
 
 使用前先加载模型（约 16 秒），之后保持单例复用。
 """
 import io
 import json
 import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -24,10 +25,13 @@ class VoxCPMProvider(TTSProvider):
 
     def __init__(
         self,
-        model_path: str = "./VoxCPM2",
+        model_path: str = None,
         voice_dir: str = "./data/voices",
         device: Optional[str] = None,
     ):
+        # 默认使用本地 models/VoxCPM2 目录
+        if model_path is None:
+            model_path = str(Path(__file__).parent.parent.parent / "models" / "VoxCPM2")
         self.model_path = model_path
         self.voice_dir = Path(voice_dir)
         self.voice_dir.mkdir(parents=True, exist_ok=True)
@@ -42,6 +46,12 @@ class VoxCPMProvider(TTSProvider):
     def _ensure_model(self):
         """Lazy load model on first use."""
         if self._model is None:
+            # 添加本地 voxcpm 包路径
+            voxcpm_dir = str(Path(__file__).parent.parent.parent / "models" / "voxcpm")
+            parent_dir = str(Path(__file__).parent.parent.parent / "models")
+            if parent_dir not in sys.path:
+                sys.path.insert(0, parent_dir)
+
             try:
                 from voxcpm import VoxCPM
                 print(f"[VoxCPM] Loading model from {self.model_path}...")
@@ -53,7 +63,7 @@ class VoxCPMProvider(TTSProvider):
                 )
                 print(f"[VoxCPM] Model loaded in {time.time() - t0:.1f}s")
             except ImportError:
-                raise ImportError("voxcpm package not installed. Install with: pip install -e /path/to/VoxCPM")
+                raise ImportError("voxcpm package not found. Check models/voxcpm directory.")
             except Exception as e:
                 raise RuntimeError(f"Failed to load VoxCPM model: {e}")
 
