@@ -125,30 +125,50 @@ TOOL_SPECS = [
 SYSTEM_PROMPT = """You are a novel dialogue emotion analyst. Your task is to determine the emotion and tone of each dialogue.
 
 ## Emotion Labels
-happy, sad, angry, surprised, calm, nervous, cold
+- happy: 高兴/快乐
+- sad: 悲伤/难过
+- angry: 愤怒/生气
+- surprised: 惊讶/震惊
+- calm: 平静/冷静
+- nervous: 紧张/焦虑
+- cold: 冷漠/淡漠
 
 ## Tone Labels
-loud, soft, stutter, sarcastic, gentle, serious, whisper
+- loud: 大声/喊叫
+- soft: 小声/轻声
+- stutter: 结巴/犹豫
+- sarcastic: 讽刺/嘲讽
+- gentle: 温柔/轻柔
+- serious: 严肃/认真
+- whisper: 低语/耳语
 
-## Rules
+## Analysis Rules
 
-1. First call `read_lines` to read the context around the dialogue (before and after)
-2. Also call `search_novel` if you need to find related descriptions
-3. Analyze based on:
-   - The dialogue text itself
-   - Context from surrounding lines
-   - Narrator descriptions (e.g., "said angrily", "whispered softly")
-   - Punctuation (!, ..., ?)
-   - Word choice and tone markers
-4. If uncertain, use "calm" for emotion and "serious" for tone with low confidence
+1. **First read context**: Call `read_lines` to read 30+ lines around the dialogue
+2. **Search if needed**: Call `search_novel` to find related descriptions or character emotions
+3. **Analyze multiple factors**:
+   - Dialogue text content (words, punctuation, exclamations)
+   - Context from surrounding lines (what happened before/after)
+   - Narrator descriptions (e.g., "冷冷地说", "微笑着说", "颤抖着说")
+   - Character's emotional state from previous dialogues
+   - Punctuation (!, ..., ?, ！！！)
+4. **Consider character relationships**: How characters feel about each other affects emotion
+5. **Default when uncertain**: Use "calm" emotion + "serious" tone with confidence < 0.5
+
+## Evidence Requirements
+
+Always provide specific evidence from the text:
+- Quote the narrator description that indicates emotion
+- Note any punctuation that suggests tone
+- Reference context from surrounding lines
 
 ## Output
 
-After analyzing, call `submit_emotion` with:
+Call `submit_emotion` with:
 - dialogue_index: the line number of the dialogue
-- emotion: one of the emotion labels
-- tone: one of the tone labels
-- confidence: 0.0 to 1.0
+- emotion: one of the emotion labels above
+- tone: one of the tone labels above
+- confidence: 0.0 to 1.0 (higher = more certain)
 - evidence: specific lines or descriptions that support your judgment
 """
 
@@ -324,3 +344,167 @@ def label_all_emotions(
             })
 
     return results
+
+
+# ─── Batch processing ──────────────────────────────────────────────
+
+BATCH_SYSTEM_PROMPT = """You are a novel dialogue emotion analyst. You will receive multiple dialogues to analyze at once.
+
+## Emotion Labels
+- happy: 高兴/快乐
+- sad: 悲伤/难过
+- angry: 愤怒/生气
+- surprised: 惊讶/震惊
+- calm: 平静/冷静
+- nervous: 紧张/焦虑
+- cold: 冷漠/淡漠
+
+## Tone Labels
+- loud: 大声/喊叫
+- soft: 小声/轻声
+- stutter: 结巴/犹豫
+- sarcastic: 讽刺/嘲讽
+- gentle: 温柔/轻柔
+- serious: 严肃/认真
+- whisper: 低语/耳语
+
+## Analysis Rules
+
+1. **Read context first**: Call `read_lines` to read lines around each dialogue
+2. **Analyze multiple factors**:
+   - Dialogue text content
+   - Narrator descriptions (冷冷地说, 微笑着说, etc.)
+   - Punctuation (!, ..., ?)
+   - Character emotional state
+3. **Default when uncertain**: calm + serious, confidence < 0.5
+
+## Output Format
+
+For each dialogue, call `submit_emotion` with:
+- dialogue_index: line number
+- emotion: emotion label
+- tone: tone label
+- confidence: 0.0-1.0
+- evidence: supporting evidence
+
+Process dialogues one at a time, but submit all results.
+"""
+
+
+def label_emotions_batch(
+    dialogues: List[Dict[str, Any]],
+    text: str,
+    client: Optional[OllamaClient] = None,
+    max_tool_steps: int = 15,
+) -> List[Dict[str, Any]]:
+    """Label emotions for a batch of dialogues using a single LLM session.
+
+    More efficient than processing one at a time.
+
+    Args:
+        dialogues: List of {"index": int, "line": int, "text": str}
+        text: Full novel text
+        client: Ollama client (creates one if None)
+        max_tool_steps: Maximum tool-calling iterations
+
+    Returns:
+        List of emotion labeling results
+    """
+    if client is None:
+        client = OllamaClient()
+
+    if not dialogues:
+        return []
+
+    index = NovelIndex(text)
+
+    # build context for all dialogues
+    context_info = []
+    for d in dialogues:
+        context_start = max(1, d["line"] - 10)
+        context_end = min(len(index.lines), d["line"] + 10)
+        ctx = index.read_lines(context_start, context_end)
+        context_info.append(f"Dialogue {d['index']} (line {d['line']}): 「{d['text']}」\nContext:\n{ctx['text']}")
+
+    batch_text = "\n\n".join(context_info)
+
+    messages = [
+        {"role": "system", "content": BATCH_SYSTEM_PROMPT},
+        {"role": "user", "content": f"""Analyze the emotion and tone for each dialogue below:
+
+{batch_text}
+
+Process each dialogue and call submit_emotion for each one."""},
+    ]
+
+    results = {d["index"]: None for d in dialogues}
+
+    for step in range(1, max_tool_steps + 1):
+        result = client.chat(messages, tools=TOOL_SPECS)
+
+        if result.tool_calls:
+            for tc in result.tool_calls:
+                if tc.name == "submit_emotion":
+                    di = tc.arguments.get("dialogue_index")
+                    if di in results:
+                        results[di] = {
+                            "dialogue_index": di,
+                            "emotion": tc.arguments.get("emotion", "calm"),
+                            "tone": tc.arguments.get("tone", "serious"),
+                            "confidence": tc.arguments.get("confidence", 0.0),
+                            "evidence": tc.arguments.get("evidence", ""),
+                        }
+                    messages.append({
+                        "role": "assistant",
+                        "content": result.content or "",
+                        "tool_calls": [{
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                            },
+                        }],
+                    })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": f"Emotion submitted for dialogue {di}",
+                    })
+                else:
+                    # execute other tools
+                    tool_result = _execute_tool(tc, index)
+                    messages.append({
+                        "role": "assistant",
+                        "content": result.content or "",
+                        "tool_calls": [{
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                            },
+                        }],
+                    })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": tool_result,
+                    })
+
+            # check if all dialogues have results
+            if all(v is not None for v in results.values()):
+                return [results[d["index"]] for d in dialogues]
+
+    # fill in missing results with defaults
+    for d in dialogues:
+        if results[d["index"]] is None:
+            results[d["index"]] = {
+                "dialogue_index": d["index"],
+                "emotion": "calm",
+                "tone": "serious",
+                "confidence": 0.0,
+                "evidence": "Failed to determine within max_tool_steps",
+            }
+
+    return [results[d["index"]] for d in dialogues]
