@@ -44,3 +44,41 @@ class ChapterList(BaseModel):
     project_id: int
     chapters: List[ChapterInfo]
     total_chapters: int
+
+
+class CharacterInfo(BaseModel):
+    id: int
+    name: str
+    gender: str
+    dialogue_count: int
+
+    class Config:
+        from_attributes = True
+
+
+class CharacterList(BaseModel):
+    project_id: int
+    characters: List[CharacterInfo]
+    total_characters: int
+
+
+class CharacterUpdate(BaseModel):
+    gender: str
+
+
+class DialogueInfo(BaseModel):
+    id: int
+    chapter: str
+    text: str
+    speaker: str
+    order: int
+
+    class Config:
+        from_attributes = True
+
+
+class DialogueList(BaseModel):
+    project_id: int
+    character_name: str
+    dialogues: List[DialogueInfo]
+    total_dialogues: int
