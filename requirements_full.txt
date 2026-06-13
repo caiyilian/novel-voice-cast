@@ -1,0 +1,49 @@
+# Novel Voice Cast - Combined dependencies
+# Includes IndexTTS2 + VoxCPM requirements
+
+# === Core ===
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+sqlalchemy[asyncio]>=2.0.0
+aiosqlite>=0.20.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-multipart>=0.0.12
+aiofiles>=24.0.0
+edge-tts>=6.0.0
+pydub>=0.25.1
+soundfile>=0.12.0
+numpy>=1.26.0
+
+# === IndexTTS2 dependencies ===
+accelerate>=1.8.0
+cn2an>=0.5.0
+cython>=3.0.0
+einops>=0.8.0
+librosa>=0.10.0
+omegaconf>=2.3.0
+safetensors>=0.5.0
+sentencepiece>=0.2.0
+tokenizers>=0.21.0,<0.22
+transformers==4.52.1
+tqdm>=4.67.0
+huggingface-hub<1.0
+funasr
+wetext
+json5
+munch
+
+# === VoxCPM dependencies ===
+torchcodec
+inflect
+addict
+modelscope>=1.22.0
+datasets>=3.0.0
+pydantic
+simplejson
+sortedcontainers
+matplotlib
+argbind
+
+# === Voice cloning (optional) ===
+# arq>=0.26.0  # for async task queue
