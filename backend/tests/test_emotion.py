@@ -2,7 +2,7 @@ import sys
 sys.path.insert(0, "..")
 
 from app.core.ollama_client import OllamaClient
-from app.core.emotion_labeler import label_emotion, label_all_emotions, EMOTIONS, TONES
+from app.core.emotion_labeler import label_emotion, EMOTIONS, TONES
 
 
 def test_single_dialogue():
@@ -68,8 +68,8 @@ def test_single_dialogue():
     print(f"  PASS: emotion={result['emotion']}, tone={result['tone']}")
 
 
-def test_batch():
-    """Test batch emotion labeling."""
+def test_multiple_dialogues():
+    """Test emotion labeling for multiple dialogues (one at a time)."""
     test_text = """第一章 初见
 
 罗伦斯坐在马车上。
@@ -89,19 +89,28 @@ def test_batch():
         {"index": 2, "line": 8, "text": "哈哈哈哈哈，咱是恶魔？"},
     ]
 
-    print("Testing batch emotion labeling...")
-    results = label_all_emotions(dialogues, test_text, client, max_tool_steps=8)
-    for r in results:
-        print(f"  Dialogue {r['dialogue_index']}: emotion={r['emotion']}, tone={r['tone']}")
+    print("Testing multiple dialogues (one at a time)...")
+    results = []
+    for d in dialogues:
+        result = label_emotion(
+            dialogue_text=d["text"],
+            dialogue_line=d["line"],
+            dialogue_index=d["index"],
+            text=test_text,
+            client=client,
+            max_tool_steps=8,
+        )
+        results.append(result)
+        print(f"  Dialogue {result['dialogue_index']}: emotion={result['emotion']}, tone={result['tone']}")
 
     # verify all results have valid emotions and tones
     for r in results:
         assert r["emotion"] in EMOTIONS, f"Invalid emotion: {r['emotion']}"
         assert r["tone"] in TONES, f"Invalid tone: {r['tone']}"
-    print("\nAll batch tests passed!")
+    print("\nAll multiple dialogue tests passed!")
 
 
 if __name__ == "__main__":
     test_single_dialogue()
     print()
-    test_batch()
+    test_multiple_dialogues()
