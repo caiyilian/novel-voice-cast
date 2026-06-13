@@ -65,7 +65,7 @@ class AudioFile(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     file_path: Mapped[str] = mapped_column(String(512))
     source: Mapped[AudioSource] = mapped_column(SAEnum(AudioSource))
-    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("characters.id"))
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("characters.id"), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.now)
 
     character: Mapped["Character"] = relationship("Character", back_populates="audio_files")

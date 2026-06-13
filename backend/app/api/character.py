@@ -6,7 +6,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Project, Character, Dialogue
+from app.models import Project, Character, Dialogue, AudioFile
 from app.schemas import CharacterInfo, CharacterList, CharacterUpdate, DialogueInfo, DialogueList
 from app.core.gender_identifier import identify_all_genders
 from app.core.ollama_client import OllamaClient, OllamaConfig
@@ -181,3 +181,99 @@ async def identify_genders(
         total_characters=len(characters),
         identified=identified,
     )
+
+
+# ─── Audio Assignment ──────────────────────────────────────────────
+
+class AudioAssignRequest(BaseModel):
+    source: str  # "upload" or "preset_male" or "preset_female"
+    audio_id: Optional[int] = None  # required if source == "upload"
+
+
+class AudioAssignResponse(BaseModel):
+    character_name: str
+    voice_source: str
+    voice_audio_id: Optional[int] = None
+
+
+@router.post("/{character_name}/assign", response_model=AudioAssignResponse)
+async def assign_audio(
+    project_id: int,
+    character_name: str,
+    body: AudioAssignRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Assign audio source to a character."""
+    # verify character exists
+    result = await db.execute(
+        select(Character)
+        .where(Character.project_id == project_id, Character.name == character_name)
+    )
+    character = result.scalar_one_or_none()
+    if not character:
+        raise HTTPException(404, f"Character '{character_name}' not found")
+
+    # handle different source types
+    if body.source == "upload":
+        if not body.audio_id:
+            raise HTTPException(400, "audio_id required for upload source")
+        # verify audio exists and belongs to this project
+        audio = await db.get(AudioFile, body.audio_id)
+        if not audio:
+            raise HTTPException(404, "Audio file not found")
+        # update audio's character_id
+        audio.character_id = character.id
+        audio.source = "upload"
+        await db.commit()
+        return AudioAssignResponse(
+            character_name=character_name,
+            voice_source="upload",
+            voice_audio_id=audio.id,
+        )
+
+    elif body.source in ("preset_male", "preset_female"):
+        # for preset, just record the source type
+        # (actual preset audio will be handled during synthesis)
+        character._voice_source = body.source
+        await db.commit()
+        return AudioAssignResponse(
+            character_name=character_name,
+            voice_source=body.source,
+            voice_audio_id=None,
+        )
+
+    else:
+        raise HTTPException(400, f"Invalid source: {body.source}")
+
+
+@router.delete("/{character_name}/assign")
+async def unassign_audio(
+    project_id: int,
+    character_name: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove audio assignment from a character."""
+    # verify character exists
+    result = await db.execute(
+        select(Character)
+        .where(Character.project_id == project_id, Character.name == character_name)
+    )
+    character = result.scalar_one_or_none()
+    if not character:
+        raise HTTPException(404, f"Character '{character_name}' not found")
+
+    # find and unassign any audio files linked to this character
+    audio_result = await db.execute(
+        select(AudioFile).where(AudioFile.character_id == character.id)
+    )
+    audio_files = audio_result.scalars().all()
+
+    for audio in audio_files:
+        audio.character_id = None
+
+    # clear preset source if any
+    character._voice_source = None
+
+    await db.commit()
+
+    return {"status": "unassigned", "character_name": character_name}
