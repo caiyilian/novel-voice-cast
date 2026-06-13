@@ -15,6 +15,7 @@ from app.api.presets import router as presets_router
 from app.api.emotions import router as emotions_router
 from app.api.preview import router as preview_router
 from app.api.ws import router as ws_router
+from app.api.synthesis import router as synthesis_router
 
 
 @asynccontextmanager
@@ -44,6 +45,7 @@ app.include_router(presets_router)
 app.include_router(emotions_router)
 app.include_router(preview_router)
 app.include_router(ws_router)
+app.include_router(synthesis_router)
 
 app.mount("/audio", StaticFiles(directory=str(UPLOAD_DIR)), name="audio")
 app.mount("/presets", StaticFiles(directory=str(PRESET_DIR)), name="presets")
