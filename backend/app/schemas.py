@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import List
 from pydantic import BaseModel
 
 
@@ -30,3 +31,16 @@ class UploadResult(BaseModel):
     characters: int
     dialogues: int
     chapters: int
+    chapter_method: str  # "llm" or "regex"
+
+
+class ChapterInfo(BaseModel):
+    title: str
+    line_number: int
+    dialogue_count: int
+
+
+class ChapterList(BaseModel):
+    project_id: int
+    chapters: List[ChapterInfo]
+    total_chapters: int
