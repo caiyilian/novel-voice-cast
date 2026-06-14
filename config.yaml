@@ -11,15 +11,16 @@ ollama:
   model: "qwen3:4b"
   timeout: 120
 
+# 音色克隆引擎选择：voxcpm 或 indextts2
+clone_engine: "voxcpm"  # 默认使用 VoxCPM
+
 # 角色音频配置
 # 不配置的角色自动用预设（根据性别）
 characters:
-  # 用 VoxCPM 克隆的角色
+  # 用音色克隆的角色
   - name: "罗伦斯"
-    voice: "voxcpm"
     reference_audio: "voices/ronald.wav"
   - name: "赫萝"
-    voice: "voxcpm"
     reference_audio: "voices/holo.wav"
 
 # 功能开关
@@ -38,4 +39,12 @@ output:
 tts:
   male_voice: "zh-CN-YunxiNeural"     # edge-tts 男声
   female_voice: "zh-CN-XiaoxiaoNeural" # edge-tts 女声
-  voxcpm_model: "backend/models/VoxCPM2"  # VoxCPM 模型路径
+
+# VoxCPM 配置（clone_engine: voxcpm 时使用）
+voxcpm:
+  model_path: "backend/models/VoxCPM2"
+
+# IndexTTS2 配置（clone_engine: indextts2 时使用）
+indextts2:
+  model_path: "backend/models/indextts"
+  device: "cuda"  # cuda 或 cpu
