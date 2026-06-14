@@ -61,12 +61,22 @@ def parse_line(text: str, current_chapter: str = "") -> dict:
     return {"type": "narrative", "chapter": current_chapter, "text": text}
 
 
-def parse(text: str) -> Tuple[List[dict], List[str]]:
+def parse(text: str, labels: List[str] = None) -> Tuple[List[dict], List[str]]:
+    """Parse novel text and extract dialogues and characters.
+
+    Args:
+        text: Novel text content
+        labels: Optional list of speaker labels from labels.txt (one per dialogue)
+
+    Returns:
+        Tuple of (dialogues, character_list)
+    """
     chapters = []
     dialogues = []
     characters = []
     seen = set()
     current_chapter = ""
+    dialogue_index = 0
 
     for line in text.splitlines():
         result = parse_line(line, current_chapter)
@@ -75,6 +85,15 @@ def parse(text: str) -> Tuple[List[dict], List[str]]:
         if result["type"] == "chapter":
             chapters.append(result)
         elif result["type"] == "dialogue":
+            # If labels provided, assign speaker from labels.txt
+            if labels and dialogue_index < len(labels):
+                label = labels[dialogue_index].strip()
+                if label and label != "非人物发声":
+                    result["speaker"] = label
+                else:
+                    result["speaker"] = ""
+            dialogue_index += 1
+
             dialogues.append(result)
             speaker = result.get("speaker")
             if speaker and speaker not in seen:
