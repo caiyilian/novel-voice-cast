@@ -1,0 +1,41 @@
+# Novel Voice Cast 配置文件
+
+# 小说文件
+novel:
+  text_path: "novels/novel.txt"        # 小说文本路径
+  labels_path: "novels/labels.txt"     # 角色标注路径
+
+# Ollama 配置（用于性别识别、情感标注）
+ollama:
+  base_url: "http://172.31.102.237:11434"
+  model: "qwen3:4b"
+  timeout: 120
+
+# 角色音频配置
+# 不配置的角色自动用预设（根据性别）
+characters:
+  # 用 VoxCPM 克隆的角色
+  - name: "罗伦斯"
+    voice: "voxcpm"
+    reference_audio: "voices/ronald.wav"
+  - name: "赫萝"
+    voice: "voxcpm"
+    reference_audio: "voices/holo.wav"
+
+# 功能开关
+features:
+  gender_identify: true        # 自动识别性别（首次运行需要）
+  emotion_label: true          # 情感标注
+  denoise: true                # 音频去噪
+
+# 输出配置
+output:
+  dir: "output"                # 输出目录
+  filename: "full_volume.wav"  # 输出文件名
+  segments_dir: "segments"     # 音频片段目录
+
+# TTS 配置
+tts:
+  male_voice: "zh-CN-YunxiNeural"     # edge-tts 男声
+  female_voice: "zh-CN-XiaoxiaoNeural" # edge-tts 女声
+  voxcpm_model: "backend/models/VoxCPM2"  # VoxCPM 模型路径
