@@ -24,6 +24,8 @@ CHAPTER_PATTERN = re.compile(
 DIALOGUE_JP = re.compile(r'「([^」]*)」[—－\-—\s]*(.+?)$')
 DIALOGUE_CN = re.compile(r'「([^」]*)」[\s　]*$')
 SPEAKER_PREFIX = re.compile(r'^(.+?)：[「『]')
+# 匹配行中间的「对话」（不在行尾）
+DIALOGUE_INLINE = re.compile(r'「([^」]*)」')
 
 
 def parse_line(text: str, current_chapter: str = "") -> dict:
@@ -54,6 +56,12 @@ def parse_line(text: str, current_chapter: str = "") -> dict:
 
     # 独立「对话」——说话人在上一行或本身不带标注
     m = DIALOGUE_CN.match(text)
+    if m:
+        dialogue_text = m.group(1).strip()
+        return {"type": "dialogue", "chapter": current_chapter, "text": dialogue_text, "speaker": ""}
+
+    # 行中间的「对话」
+    m = DIALOGUE_INLINE.search(text)
     if m:
         dialogue_text = m.group(1).strip()
         return {"type": "dialogue", "chapter": current_chapter, "text": dialogue_text, "speaker": ""}
@@ -99,6 +107,20 @@ def parse(text: str, labels: List[str] = None) -> Tuple[List[dict], List[str]]:
             if speaker and speaker not in seen:
                 seen.add(speaker)
                 characters.append(speaker)
+
+        elif result["type"] == "narrative":
+            # 叙述性文字也作为对话处理（旁白）
+            text = result.get("text", "").strip()
+            if text and len(text) > 5:  # 忽略太短的叙述
+                dialogues.append({
+                    "type": "dialogue",
+                    "chapter": result.get("chapter", ""),
+                    "text": text,
+                    "speaker": "旁白",
+                })
+                if "旁白" not in seen:
+                    seen.add("旁白")
+                    characters.append("旁白")
 
     character_list = sorted(characters, key=lambda x: -sum(1 for d in dialogues if d.get("speaker") == x))
     return dialogues, character_list
