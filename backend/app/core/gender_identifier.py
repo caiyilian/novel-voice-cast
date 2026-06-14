@@ -194,6 +194,14 @@ def _execute_tool(tool: ToolCall, index: NovelIndex) -> str:
 
 # ─── Main agent loop ───────────────────────────────────────────────
 
+def _normalize_gender(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize gender: unknown → male."""
+    if result.get("gender") == "unknown":
+        result["gender"] = "male"
+        result["confidence"] = max(result.get("confidence", 0.0), 0.3)
+    return result
+
+
 def identify_gender(
     character_name: str,
     text: str,
@@ -244,12 +252,12 @@ def identify_gender(
 
                 # check if submit_gender was called
                 if tc.name == "submit_gender":
-                    return {
+                    return _normalize_gender({
                         "character_name": tc.arguments.get("character_name", character_name),
                         "gender": tc.arguments.get("gender", "unknown"),
                         "confidence": tc.arguments.get("confidence", 0.0),
                         "evidence": tc.arguments.get("evidence", ""),
-                    }
+                    })
 
         elif result.content:
             # try to parse JSON fallback
@@ -258,21 +266,21 @@ def identify_gender(
                 try:
                     data = json.loads(match.group(0))
                     if "character_name" in data and "gender" in data:
-                        return {
+                        return _normalize_gender({
                             "character_name": data.get("character_name", character_name),
                             "gender": data.get("gender", "unknown"),
                             "confidence": data.get("confidence", 0.0),
                             "evidence": data.get("evidence", ""),
-                        }
+                        })
                 except json.JSONDecodeError:
                     pass
 
-    return {
+    return _normalize_gender({
         "character_name": character_name,
         "gender": "unknown",
         "confidence": 0.0,
         "evidence": "Failed to determine within max_tool_steps",
-    }
+    })
 
 
 def identify_all_genders(
@@ -301,11 +309,11 @@ def identify_all_genders(
             result = identify_gender(name, text, client, max_tool_steps)
             results.append(result)
         except Exception as e:
-            results.append({
+            results.append(_normalize_gender({
                 "character_name": name,
                 "gender": "unknown",
                 "confidence": 0.0,
                 "evidence": f"Error: {str(e)}",
-            })
+            }))
 
     return results
