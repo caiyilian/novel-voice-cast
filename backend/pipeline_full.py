@@ -58,19 +58,143 @@ def save_audio(audio_bytes: bytes, output_path: str):
         f.write(audio_bytes)
 
 
-def synthesize_edge_tts_sync(text: str, voice_id: str) -> bytes:
+def format_time(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    elif seconds < 3600:
+        return f"{seconds/60:.1f}min"
+    else:
+        return f"{seconds/3600:.1f}h"
+
+
+# ========== edge-tts（带重试 + pyttsx3 兜底）==========
+
+def synthesize_edge_tts_sync(text: str, voice_id: str, max_retries: int = 1) -> bytes:
+    """edge-tts 合成，失败重试，再失败用 pyttsx3"""
     import edge_tts
-    async def _run():
-        communicate = edge_tts.Communicate(text, voice_id)
-        audio_data = io.BytesIO()
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_data.write(chunk["data"])
-        return audio_data.getvalue()
-    return asyncio.run(_run())
+
+    for attempt in range(max_retries + 1):
+        try:
+            async def _run():
+                communicate = edge_tts.Communicate(text, voice_id)
+                audio_data = io.BytesIO()
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        audio_data.write(chunk["data"])
+                return audio_data.getvalue()
+            return asyncio.run(_run())
+        except Exception as e:
+            if attempt < max_retries:
+                time.sleep(0.5)  # 等待后重试
+            else:
+                # 重试失败，用 pyttsx3 兜底
+                return synthesize_pyttsx3_sync(text)
 
 
-def synthesize_voxcpm_sync(text: str, reference_audio: str) -> bytes:
+def synthesize_pyttsx3_sync(text: str) -> bytes:
+    """pyttsx3 离线合成"""
+    import tempfile
+    import pyttsx3
+
+    engine = pyttsx3.init()
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        temp_path = f.name
+
+    try:
+        engine.save_to_file(text, temp_path)
+        engine.runAndWait()
+        engine.stop()
+
+        with open(temp_path, "rb") as f:
+            return f.read()
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+# ========== VoxCPM（批量处理）==========
+
+def synthesize_voxcpm_batch(voxcpm_items: list) -> dict:
+    """批量 VoxCPM 合成，模型只加载一次"""
+    if not voxcpm_items:
+        return {}
+
+    # 构建批量处理脚本
+    items_json = json.dumps([
+        {"index": item["index"], "text": item["text"], "ref_audio": item["ref_audio"]}
+        for item in voxcpm_items
+    ], ensure_ascii=False)
+
+    script = f'''
+import sys
+import json
+import os
+sys.path.insert(0, r"E:\\projects\\音色克隆\\VoxCPM")
+from voxcpm import VoxCPM
+import soundfile as sf
+import io
+
+# 加载模型（只加载一次）
+model = VoxCPM.from_pretrained(
+    r"E:\\projects\\novel-voice-cast\\backend\\models\\VoxCPM2",
+    load_denoiser=False,
+)
+
+# 读取任务列表
+items = json.loads(r"""{items_json}""")
+
+results = {{}}
+for item in items:
+    try:
+        text = item["text"].replace('"', '\\\\"').replace('\\n', ' ')
+        wav = model.generate(
+            text=text,
+            reference_wav_path=item["ref_audio"],
+            cfg_value=2.0,
+            inference_timesteps=10,
+        )
+        buf = io.BytesIO()
+        sf.write(buf, wav, model.tts_model.sample_rate, format="WAV")
+        results[item["index"]] = buf.getvalue()
+    except Exception as e:
+        results[item["index"]] = None
+
+# 输出结果
+print(json.dumps({{"status": "ok", "count": len(results)}}))
+'''
+
+    temp_script = OUTPUT_DIR / "_temp_voxcpm_batch.py"
+    temp_script.parent.mkdir(parents=True, exist_ok=True)
+    with open(temp_script, "w", encoding="utf-8") as f:
+        f.write(script)
+
+    voxcpm_python = r"E:\projects\音色克隆\VoxCPM\.venv\python.exe"
+
+    print(f"\n  VoxCPM: 加载模型并批量合成 {len(voxcpm_items)} 条...")
+    t0 = time.time()
+
+    result = subprocess.run(
+        [voxcpm_python, str(temp_script)],
+        capture_output=True,
+        timeout=600,  # 10 分钟超时
+    )
+
+    elapsed = time.time() - t0
+    print(f"  VoxCPM: 完成 [{format_time(elapsed)}]")
+
+    temp_script.unlink(missing_ok=True)
+
+    if result.returncode != 0:
+        print(f"  VoxCPM 错误: {result.stderr.decode('utf-8', errors='ignore')[:200]}")
+        return {}
+
+    # 注意：这里需要改进，因为 subprocess 无法直接返回 bytes
+    # 暂时返回空 dict，后续优化
+    return {}
+
+
+def synthesize_voxcpm_single(text: str, reference_audio: str) -> bytes:
+    """单条 VoxCPM 合成（作为备用）"""
     escaped_text = text.replace('"', '\\"').replace('\n', ' ')
     script = f'''
 import sys
@@ -109,15 +233,6 @@ sys.stdout.buffer.write(buf.getvalue())
     if result.returncode != 0:
         raise RuntimeError(f"VoxCPM error: {result.stderr.decode('utf-8', errors='ignore')}")
     return result.stdout
-
-
-def format_time(seconds: float) -> str:
-    if seconds < 60:
-        return f"{seconds:.1f}s"
-    elif seconds < 3600:
-        return f"{seconds/60:.1f}min"
-    else:
-        return f"{seconds/3600:.1f}h"
 
 
 def main():
@@ -180,6 +295,7 @@ def main():
     total_dialogues = len(dialogues)
     success_count = 0
     fail_count = 0
+    fallback_count = 0
 
     print(f"\n[5/5] 开始合成 {total_dialogues} 条对话...")
 
@@ -198,11 +314,13 @@ def main():
 
         try:
             if voice_config["engine"] == "voxcpm":
-                audio_bytes = synthesize_voxcpm_sync(text, voice_config["reference_audio"])
+                audio_bytes = synthesize_voxcpm_single(text, voice_config["reference_audio"])
+                engine_tag = "V"
             else:
                 audio_bytes = synthesize_edge_tts_sync(text, voice_config["voice_id"])
-            save_audio(audio_bytes, output_path)
+                engine_tag = "E"
 
+            save_audio(audio_bytes, output_path)
             segments.append({
                 "audio_path": output_path,
                 "chapter": chapter,
@@ -213,6 +331,7 @@ def main():
 
         except Exception as e:
             fail_count += 1
+            # 生成静音占位
             silence = AudioSegment.silent(duration=1000)
             silence.export(output_path, format="wav")
             segments.append({
@@ -226,7 +345,6 @@ def main():
         elapsed = time.time() - t0
         avg = elapsed / (i + 1)
         remaining = avg * (total_dialogues - i - 1)
-        engine_tag = "V" if voice_config["engine"] == "voxcpm" else "E"
         print(f"\r  [{i+1:4d}/{total_dialogues}] {engine_tag} "
               f"成功 {success_count:4d} 失败 {fail_count:2d} | "
               f"已用 {format_time(elapsed)} 剩余 ~{format_time(remaining)}   ", end="", flush=True)
