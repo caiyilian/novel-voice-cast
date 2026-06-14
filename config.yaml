@@ -14,6 +14,11 @@ ollama:
 # 音色克隆引擎选择：voxcpm 或 indextts2
 clone_engine: "voxcpm"  # 默认使用 VoxCPM
 
+# 预设 TTS 引擎选择：edge-tts 或 pyttsx3
+# edge-tts: 在线，音质好，需要联网
+# pyttsx3: 离线，音质一般，不需要联网
+preset_engine: "pyttsx3"
+
 # 角色音频配置
 # 不配置的角色自动用预设（根据性别）
 characters:
