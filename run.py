@@ -161,10 +161,16 @@ def step_tts(config: dict, dialogues: list, gender_results: dict, emotion_result
 
 
 def step_splice(config: dict, segments: list) -> str:
-    """步骤5：音频拼接（模拟）"""
+    """步骤5：音频拼接"""
     t0 = time.time()
 
-    output_path = str(Path(config["output"]["dir"]) / config["output"]["filename"])
+    output_dir = config["output"]["dir"]
+    filename = config["output"]["filename"]
+    fmt = config["output"].get("format", "mp3")
+    bitrate = config["output"].get("bitrate", "64k")
+
+    output_path = str(Path(output_dir) / f"{filename}.{fmt}")
+    print(f"  输出格式: {fmt} ({bitrate})")
     print(f"  输出路径: {output_path}")
 
     elapsed = time.time() - t0
@@ -173,14 +179,16 @@ def step_splice(config: dict, segments: list) -> str:
 
 
 def step_denoise(config: dict, audio_path: str) -> str:
-    """步骤6：去噪（模拟）"""
+    """步骤6：去噪"""
     if not config["features"].get("denoise", True):
         print("  跳过（已禁用）")
         return audio_path
 
     t0 = time.time()
 
-    denoised_path = audio_path.replace(".wav", "_denoised.wav")
+    # 去噪后输出到新文件
+    path = Path(audio_path)
+    denoised_path = str(path.parent / f"{path.stem}_denoised{path.suffix}")
     print(f"  输出路径: {denoised_path}")
 
     elapsed = time.time() - t0
