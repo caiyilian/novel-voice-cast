@@ -11,64 +11,43 @@ ollama:
   model: "qwen3:4b"
   timeout: 120
 
-# 音色克隆引擎选择：voxcpm 或 indextts2
-clone_engine: "voxcpm"  # 默认使用 VoxCPM
+# 音色克隆引擎：voxcpm
+clone_engine: "voxcpm"
 
-# 预设 TTS 引擎选择：edge-tts 或 pyttsx3
-# edge-tts: 在线，音质好，需要联网
-# pyttsx3: 离线，音质一般，不需要联网
+# 预设 TTS 引擎（备用）
 preset_engine: "pyttsx3"
 
 # 角色音频配置
-# 不配置的角色自动用预设（根据性别）
+# 格式：角色名 → 参考音频路径
+# 不配置的角色自动根据性别选择默认音频
 characters:
-  # 用音色克隆的角色
-  - name: "罗伦斯"
-    reference_audio: "voices/ronald.wav"
-  - name: "赫萝"
-    reference_audio: "voices/holo.wav"
+  # 旁白 - 用深沉男声
+  "旁白": "backend/data/presets/design_male_deep.wav"
+
+  # 主角
+  "罗伦斯": "backend/data/presets/demo_male.mp3"
+  "劳伦斯": "backend/data/presets/demo_male.mp3"
+  "赫萝": "backend/data/presets/holo_short.wav"  # 截取前30秒
+
+# 默认音频（根据性别）
+default_audio:
+  male: "backend/data/presets/design_elderly.wav"      # 其他男性
+  female: "backend/data/presets/reference_speaker.wav"  # 其他女性
 
 # 功能开关
 features:
-  gender_identify: true        # 自动识别性别（首次运行需要）
-  emotion_label: true          # 情感标注
-  denoise: true                # 音频去噪
+  gender_identify: true        # 自动识别性别
+  emotion_label: true          # 情感标注（旁白跳过）
+  denoise: false               # 音频去噪
+  force_reprocess: true       # 强制重新处理情感标注（忽略已有结果）
 
 # 输出配置
 output:
-  dir: "output"                    # 输出目录
-  filename: "full_volume"          # 输出文件名（不含扩展名）
-  format: "mp3"                    # 输出格式：wav 或 mp3
-  bitrate: "64k"                   # MP3 码率：64k, 128k, 192k, 320k（仅 mp3 有效）
+  dir: "output"
+  filename: "full_volume"
+  format: "mp3"
+  bitrate: "96k"  # 压缩率适中，音质可接受
 
-# TTS 配置
-tts:
-  male_voice: "zh-CN-YunxiNeural"     # edge-tts 男声
-  female_voice: "zh-CN-XiaoxiaoNeural" # edge-tts 女声
-
-# VoxCPM 配置（clone_engine: voxcpm 时使用）
-# 模型下载：https://github.com/Rikorose/DeepFilterNet 或联系项目作者
-# 模型结构：
-#   VoxCPM2/
-#   ├── audiovae.pth          (376 MB)
-#   ├── config.json           (4 KB)
-#   ├── model.safetensors     (4.5 GB)
-#   ├── tokenizer.json        (3.6 MB)
-#   └── tokenizer_config.json (5 KB)
+# TTS 配置（VoxCPM）
 voxcpm:
   model_path: "backend/models/VoxCPM2"
-
-# IndexTTS2 配置（clone_engine: indextts2 时使用）
-# 模型下载：https://github.com/Rikorose/DeepFilterNet 或联系项目作者
-# 模型结构：
-#   checkpoints/IndexTTS-2/
-#   ├── bpe.model             (476 KB)
-#   ├── config.yaml           (2.8 KB)
-#   ├── feat1.pt              (57 KB)
-#   ├── feat2.pt              (375 KB)
-#   ├── gpt.pth               (3.4 GB)
-#   ├── s2mel.pth             (1.2 GB)
-#   └── wav2vec2bert_stats.pt (9 KB)
-indextts2:
-  model_path: "backend/models/checkpoints/IndexTTS-2"
-  device: "cuda"  # cuda 或 cpu
