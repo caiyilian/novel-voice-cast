@@ -93,20 +93,58 @@ def parse(text: str, labels: List[str] = None) -> Tuple[List[dict], List[str]]:
         if result["type"] == "chapter":
             chapters.append(result)
         elif result["type"] == "dialogue":
-            # If labels provided, assign speaker from labels.txt
-            if labels and dialogue_index < len(labels):
-                label = labels[dialogue_index].strip()
-                if label and label != "非人物发声":
-                    result["speaker"] = label
-                else:
-                    result["speaker"] = ""
-            dialogue_index += 1
+            # 检查一行是否有多个「」对话
+            dialogue_texts = re.findall(r'「([^」]*)」', line)
+            
+            if len(dialogue_texts) > 1:
+                # 一行有多个对话，分别处理
+                # 先从原始行提取说话人
+                original_speaker = result.get("speaker", "")
+                
+                for dt in dialogue_texts:
+                    dt = dt.strip()
+                    if not dt:
+                        continue
+                    
+                    # 从 labels.txt 获取说话人
+                    speaker = ""
+                    if labels and dialogue_index < len(labels):
+                        label = labels[dialogue_index].strip()
+                        if label and label != "非人物发声":
+                            speaker = label
+                    
+                    # 如果 labels.txt 没有标签，使用原始行的说话人
+                    if not speaker and original_speaker:
+                        speaker = original_speaker
+                    
+                    dialogue_entry = {
+                        "type": "dialogue",
+                        "chapter": current_chapter,
+                        "text": dt,
+                        "speaker": speaker,
+                    }
+                    dialogues.append(dialogue_entry)
+                    
+                    if speaker and speaker not in seen:
+                        seen.add(speaker)
+                        characters.append(speaker)
+                    
+                    dialogue_index += 1
+            else:
+                # 一行只有一个对话
+                if labels and dialogue_index < len(labels):
+                    label = labels[dialogue_index].strip()
+                    if label and label != "非人物发声":
+                        result["speaker"] = label
+                    else:
+                        result["speaker"] = ""
+                dialogue_index += 1
 
-            dialogues.append(result)
-            speaker = result.get("speaker")
-            if speaker and speaker not in seen:
-                seen.add(speaker)
-                characters.append(speaker)
+                dialogues.append(result)
+                speaker = result.get("speaker")
+                if speaker and speaker not in seen:
+                    seen.add(speaker)
+                    characters.append(speaker)
 
         elif result["type"] == "narrative":
             # 叙述性文字也作为对话处理（旁白）
