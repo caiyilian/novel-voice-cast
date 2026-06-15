@@ -323,14 +323,17 @@ def step_tts(config: dict, dialogues: list, gender_results: dict, emotion_result
     else:
         results = []
 
-    # 构建 segments 列表
+    # 构建 segments 列表（包含所有对话，不仅仅是本次合成的）
     segments = []
-    for task in tasks:
+    for i, dialogue in enumerate(dialogues):
+        speaker = dialogue.get("speaker", "")
+        chapter = dialogue.get("chapter", "unknown")
+        output_path = str(segments_dir / f"{i:05d}.wav")
         segments.append({
-            "audio_path": task["output_path"],
-            "chapter": task["chapter"],
-            "order": task["index"],
-            "speaker": task["speaker"],
+            "audio_path": output_path,
+            "chapter": chapter,
+            "order": i,
+            "speaker": speaker,
         })
 
     return segments
