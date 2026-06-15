@@ -49,10 +49,13 @@ def parse_line(text: str, current_chapter: str = "") -> dict:
     m = SPEAKER_PREFIX.match(text)
     if m:
         speaker = m.group(1).strip()
-        dialogue_text = text[m.end():]
-        if dialogue_text.endswith('」'):
-            dialogue_text = dialogue_text[:-1]
-        return {"type": "dialogue", "chapter": current_chapter, "text": dialogue_text.strip(), "speaker": speaker}
+        # 从整行提取「」之间的内容
+        dialogue_match = re.search(r'「([^」]*)」', text)
+        if dialogue_match:
+            dialogue_text = dialogue_match.group(1).strip()
+        else:
+            dialogue_text = text[m.end():].strip()
+        return {"type": "dialogue", "chapter": current_chapter, "text": dialogue_text, "speaker": speaker}
 
     # 独立「对话」——说话人在上一行或本身不带标注
     m = DIALOGUE_CN.match(text)
