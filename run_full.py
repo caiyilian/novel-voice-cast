@@ -198,6 +198,7 @@ def step_emotion(config: dict, dialogues: list, novel_text: str, force_reprocess
                 text=novel_text,
                 client=client,
                 max_tool_steps=5,
+                speaker=speaker,
             )
             results[str(i)] = {
                 "emotion": result.get("emotion", "calm"),
