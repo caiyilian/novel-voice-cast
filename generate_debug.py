@@ -32,17 +32,20 @@ with open(output_path, "w", encoding="utf-8") as f:
     f.write("=" * 60 + "\n\n")
 
     # 只显示对话（不显示旁白）
-    dialogue_index = 0
+    label_index = 0
     for i, d in enumerate(dialogues):
         speaker = d.get("speaker", "")
         text = d.get("text", "")
         
-        # 只显示非旁白对话
-        if speaker and speaker != "旁白":
-            label = labels[dialogue_index] if dialogue_index < len(labels) else "无标签"
-            match = "✓" if speaker == label else "✗"
-            f.write(f"[{i:4d}] {match} parser={speaker:10s} label={label:10s} | {text[:50]}\n")
-            dialogue_index += 1
+        # 旁白跳过
+        if speaker == "旁白" or not speaker:
+            continue
+        
+        # 非旁白对话，用 label_index 匹配
+        label = labels[label_index] if label_index < len(labels) else "无标签"
+        match = "✓" if speaker == label else "✗"
+        f.write(f"[{i:4d}] {match} parser={speaker:10s} label={label:10s} | {text[:50]}\n")
+        label_index += 1
 
 print(f"已生成: {output_path}")
 print(f"对话总数: {len(dialogues)}")
