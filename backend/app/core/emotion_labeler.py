@@ -209,6 +209,7 @@ def label_emotion(
     text: str,
     client: OllamaClient,
     max_tool_steps: int = 10,
+    speaker: str = "",
 ) -> Dict[str, Any]:
     """Identify emotion for a single dialogue.
 
@@ -219,6 +220,7 @@ def label_emotion(
         text: Full novel text
         client: Ollama client
         max_tool_steps: Maximum tool-calling iterations
+        speaker: Speaker name (optional)
 
     Returns:
         {"dialogue_index": int, "emotion": str, "tone": str, "confidence": float, "evidence": str}
@@ -235,6 +237,7 @@ def label_emotion(
         {"role": "user", "content": f"""Analyze the emotion and tone of this dialogue:
 
 Dialogue (line {dialogue_line}): 「{dialogue_text}」
+Speaker: {speaker if speaker else "unknown"}
 
 Context:
 {context['text']}
