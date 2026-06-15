@@ -78,6 +78,7 @@ def main():
                 client=client,
                 max_tool_steps=5,
                 speaker=speaker,
+                dialogues=dialogues,
             )
             result["speaker"] = speaker
             result["text"] = text

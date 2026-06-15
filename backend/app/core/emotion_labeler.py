@@ -21,16 +21,33 @@ TONES = ["loud", "soft", "stutter", "sarcastic", "gentle", "serious", "whisper"]
 class NovelIndex:
     """Indexes novel text for search and read operations."""
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, dialogues: List[Dict] = None):
         self.text = text
         self.lines = text.splitlines()
+        # 构建行号到说话人的映射
+        self.line_to_speaker = {}
+        if dialogues:
+            for d in dialogues:
+                line_num = d.get("line", 0)
+                speaker = d.get("speaker", "")
+                if line_num > 0 and speaker and speaker != "旁白":
+                    self.line_to_speaker[line_num] = speaker
+
+    def _format_line(self, line_num: int, line: str) -> str:
+        """给对话行加上说话人标记"""
+        speaker = self.line_to_speaker.get(line_num)
+        if speaker and "「" in line:
+            # 给对话行加上【说话人】标记
+            return f"{line_num}: 【{speaker}】{line.strip()}"
+        return f"{line_num}: {line.strip()}"
 
     def search(self, keyword: str, limit: int = 20) -> Dict[str, Any]:
         """Search for keyword in novel text."""
         matches = []
         for i, line in enumerate(self.lines, start=1):
             if keyword in line:
-                matches.append({"line_number": i, "line": line.strip()[:120]})
+                formatted = self._format_line(i, line)
+                matches.append({"line_number": i, "line": formatted[:120]})
                 if len(matches) >= limit:
                     break
         total = sum(1 for line in self.lines if keyword in line)
@@ -52,7 +69,7 @@ class NovelIndex:
             truncated = True
         else:
             truncated = False
-        text = "\n".join(f"{start + i}: {line.strip()}" for i, line in enumerate(lines))
+        text = "\n".join(self._format_line(start + i, line) for i, line in enumerate(lines))
         return {"text": text, "truncated": truncated}
 
     def get_dialogue_context(self, dialogue_index: int, context_lines: int = 5) -> Dict[str, Any]:
@@ -210,6 +227,7 @@ def label_emotion(
     client: OllamaClient,
     max_tool_steps: int = 10,
     speaker: str = "",
+    dialogues: List[Dict] = None,
 ) -> Dict[str, Any]:
     """Identify emotion for a single dialogue.
 
@@ -221,11 +239,12 @@ def label_emotion(
         client: Ollama client
         max_tool_steps: Maximum tool-calling iterations
         speaker: Speaker name (optional)
+        dialogues: List of all dialogues with speaker info (optional)
 
     Returns:
         {"dialogue_index": int, "emotion": str, "tone": str, "confidence": float, "evidence": str}
     """
-    index = NovelIndex(text)
+    index = NovelIndex(text, dialogues)
 
     # 只提供对话本身，让 LLM 自己探索上下文
     messages = [
