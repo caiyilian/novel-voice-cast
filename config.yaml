@@ -27,7 +27,7 @@ characters:
   # 主角
   "罗伦斯": "backend/data/presets/demo_male.mp3"
   "劳伦斯": "backend/data/presets/demo_male.mp3"
-  "赫萝": "backend/data/presets/holo_short.wav"  # 截取前30秒
+  "赫萝": "backend/data/presets/holo_speech_only.wav"  # 提取语音部分，去掉静音
 
 # 默认音频（根据性别）
 default_audio:
@@ -39,7 +39,7 @@ features:
   gender_identify: true        # 自动识别性别
   emotion_label: true          # 情感标注（旁白跳过）
   denoise: false               # 音频去噪
-  force_reprocess: true       # 强制重新处理情感标注（忽略已有结果）
+  force_reprocess: false       # 强制重新处理情感标注（忽略已有结果）
 
 # 输出配置
 output:

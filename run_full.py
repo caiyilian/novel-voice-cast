@@ -237,10 +237,18 @@ def step_tts(config: dict, dialogues: list, gender_results: dict, emotion_result
 
     # 构建任务列表
     tasks = []
+    skipped_existing = 0
     for i, dialogue in enumerate(dialogues):
         speaker = dialogue.get("speaker", "")
         text = dialogue["text"]
         chapter = dialogue.get("chapter", "unknown")
+
+        # 检查是否已存在音频文件
+        filename = f"{i:05d}.wav"
+        output_path = str(segments_dir / filename)
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            skipped_existing += 1
+            continue
 
         # 获取性别
         gender_info = gender_results.get(speaker, {"gender": "male"})
@@ -263,10 +271,10 @@ def step_tts(config: dict, dialogues: list, gender_results: dict, emotion_result
             "emotion_prefix": emotion_prefix,
             "chapter": chapter,
             "speaker": speaker,
-            "output_path": str(segments_dir / f"{i:05d}_{speaker}.wav"),
+            "output_path": str(segments_dir / f"{i:05d}.wav"),
         })
 
-    print(f"  准备合成 {len(tasks)} 条对话...")
+    print(f"  准备合成 {len(tasks)} 条对话... (跳过已有: {skipped_existing})")
 
     # 创建 VoxCPM 批量处理脚本
     script = create_voxcpm_script(tasks, config)
