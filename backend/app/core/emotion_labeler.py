@@ -232,15 +232,22 @@ def label_emotion(
     context_end = min(len(index.lines), dialogue_line + 30)
     context = index.read_lines(context_start, context_end)
 
+    # 在上下文中给对话加上说话人标记
+    context_text = context['text']
+    if speaker:
+        # 替换目标行，加上说话人标记
+        target_line = f"{dialogue_line}: 「{dialogue_text}」"
+        marked_line = f"{dialogue_line}: 【{speaker}】「{dialogue_text}」"
+        context_text = context_text.replace(target_line, marked_line)
+
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": f"""Analyze the emotion and tone of this dialogue:
 
-Dialogue (line {dialogue_line}): 「{dialogue_text}」
-Speaker: {speaker if speaker else "unknown"}
+Dialogue (line {dialogue_line}): 【{speaker}】「{dialogue_text}」
 
 Context:
-{context['text']}
+{context_text}
 
 Use read_lines or search_novel to explore more context if needed, then call submit_emotion."""},
     ]
