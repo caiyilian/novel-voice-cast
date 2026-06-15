@@ -1,7 +1,6 @@
 """
-音频拼接脚本 - 把 test_output/segments 拼接成整卷音频
+音频拼接脚本 - 把 output/segments 拼接成整卷音频
 """
-import json
 import os
 import sys
 import time
@@ -14,10 +13,9 @@ from app.core.splicer import AudioSplicer
 
 # ========== 配置 ==========
 BASE_DIR = Path(__file__).parent.parent
-SEGMENTS_DIR = BASE_DIR / "test_output" / "segments"
-SEGMENTS_JSON = BASE_DIR / "test_output" / "segments.json"
-OUTPUT_WAV = BASE_DIR / "test_output" / "full_volume.wav"
-OUTPUT_MP3 = BASE_DIR / "test_output" / "full_volume.mp3"
+SEGMENTS_DIR = BASE_DIR / "output" / "segments"
+OUTPUT_WAV = BASE_DIR / "output" / "full_volume.wav"
+OUTPUT_MP3 = BASE_DIR / "output" / "full_volume.mp3"
 
 
 def format_time(seconds: float) -> str:
@@ -36,10 +34,10 @@ def main():
     print("音频拼接")
     print("=" * 60)
 
-    # 加载片段信息
+    # 加载片段信息（从目录读取）
     t0 = time.time()
-    with open(SEGMENTS_JSON, "r", encoding="utf-8") as f:
-        segments = json.load(f)
+    wav_files = sorted(SEGMENTS_DIR.glob("*.wav"), key=lambda x: int(x.stem))
+    segments = [{"audio_path": str(f), "order": int(f.stem)} for f in wav_files]
     print(f"\n[1/2] 加载片段: {len(segments)} 条 [{time.time()-t0:.2f}s]")
 
     # 拼接
