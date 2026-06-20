@@ -1,5 +1,6 @@
 """
 Run Stage 7-a BGM scene segmentation and cache the result as JSON.
+Also supports Stage 7-b: label BGM types for existing segments.
 """
 import argparse
 import json
@@ -15,9 +16,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
 from app.core.bgm_segmenter import (  # noqa: E402
     DEFAULT_OUTPUT_PATH,
     SegmentationError,
+    label_bgm_types,
     load_segments,
     save_segments,
     segment_novel,
+    segment_novel_chunked,
     validate_segments,
 )
 from app.core.ollama_client import OllamaClient, OllamaConfig  # noqa: E402
@@ -55,13 +58,15 @@ def parse_novel(config: dict) -> tuple[list, list, str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Stage 7-a: segment a novel into BGM scenes")
+    parser = argparse.ArgumentParser(description="BGM scene segmentation and type labeling")
     parser.add_argument("--config", default="config.yaml", help="Config YAML path")
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT_PATH), help="Output JSON cache path")
     parser.add_argument("--force", action="store_true", help="Regenerate even if output exists")
     parser.add_argument("--min-segments", type=int, default=5, help="Minimum accepted scene segments")
     parser.add_argument("--max-segments", type=int, default=20, help="Maximum accepted scene segments")
     parser.add_argument("--max-tool-steps", type=int, default=80, help="Maximum LLM tool-calling turns")
+    parser.add_argument("--chunks", type=int, default=0, help="Split into N chunks for multi-agent segmentation (default: 0 = single agent)")
+    parser.add_argument("--label-types", action="store_true", help="Label BGM types for existing segments (7-b)")
     args = parser.parse_args()
 
     start_time = time.time()
@@ -72,13 +77,48 @@ def main() -> int:
     total_lines = len(novel_text.splitlines())
 
     print("=" * 60)
-    print("Stage 7-a: BGM scene segmentation")
+    print("BGM Scene Processing")
     print("=" * 60)
     print(f"Config: {args.config}")
+    print(f"Output: {output_path}")
     print(f"Novel lines: {total_lines}")
-    print(f"Parsed dialogue/narration entries: {len(dialogues)}")
+    print(f"Parsed entries: {len(dialogues)}")
     print(f"Characters: {len(characters)}")
 
+    client = build_ollama_client(config)
+    print(f"Ollama: {client.config.base_url} / {client.config.model}")
+
+    # ── Mode: BGM type labeling (7-b) ──
+    if args.label_types:
+        if not output_path.exists():
+            print(f"ERROR: No segments found at {output_path}. Run segmentation first (no --label-types).")
+            return 1
+        segments = load_segments(output_path)
+        print(f"Loaded {len(segments)} existing segments from {output_path}")
+
+        if not args.force:
+            already_labeled = all("bgm_type" in s for s in segments)
+            if already_labeled:
+                print(f"All {len(segments)} segments already have BGM types. Use --force to re-label.")
+                return 0
+
+        print(f"\nLabeling BGM types for {len(segments)} segments...")
+        labeled = label_bgm_types(segments, client=client)
+        save_segments(output_path, labeled)
+
+        labeled_count = sum(1 for s in labeled if "bgm_type" in s)
+        types_dist = {}
+        for s in labeled:
+            t = s.get("bgm_type", "unknown")
+            types_dist[t] = types_dist.get(t, 0) + 1
+
+        elapsed = time.time() - start_time
+        print(f"\nDone: {labeled_count}/{len(labeled)} segments labeled")
+        print(f"BGM type distribution: {json.dumps(types_dist, ensure_ascii=False)}")
+        print(f"Elapsed: {elapsed:.1f}s")
+        return 0
+
+    # ── Mode: Scene segmentation (7-a) ──
     if output_path.exists() and not args.force:
         segments = load_segments(output_path)
         problems = validate_segments(segments, total_lines, args.min_segments, args.max_segments)
@@ -90,18 +130,24 @@ def main() -> int:
         print(f"Segments: {len(segments)}")
         return 0
 
-    client = build_ollama_client(config)
-    print(f"Ollama: {client.config.base_url} / {client.config.model}")
-
+    print("\nSegmenting novel into BGM scenes...")
     try:
-        segments = segment_novel(
-            novel_text,
-            dialogues=dialogues,
-            client=client,
-            min_segments=args.min_segments,
-            max_segments=args.max_segments,
-            max_tool_steps=args.max_tool_steps,
-        )
+        if args.chunks > 0:
+            print(f"Multi-agent mode: {args.chunks} chunks (direct prompt, no tool calling)")
+            segments = segment_novel_chunked(
+                novel_text,
+                client=client,
+                num_chunks=args.chunks,
+            )
+        else:
+            segments = segment_novel(
+                novel_text,
+                dialogues=dialogues,
+                client=client,
+                min_segments=args.min_segments,
+                max_segments=args.max_segments,
+                max_tool_steps=args.max_tool_steps,
+            )
     except SegmentationError as exc:
         print(f"Segmentation failed: {exc}")
         return 1
