@@ -8,8 +8,8 @@ novel:
 # Ollama 配置（用于性别识别、情感标注）
 ollama:
   base_url: "http://172.31.102.237:11434"
-  model: "qwen3:4b"
-  timeout: 120
+  model: "qwen3:32b"
+  timeout: 300
 
 # 音色克隆引擎：voxcpm
 clone_engine: "voxcpm"
@@ -51,3 +51,14 @@ output:
 # TTS 配置（VoxCPM）
 voxcpm:
   model_path: "backend/models/VoxCPM2"
+
+# BGM 配置（Stage 7）
+bgm:
+  enabled: true                    # 是否启用 BGM
+  force_segmentation: false        # 重新执行场景分割
+  force_label: false               # 重新标注 BGM 类型
+  force_generate: false            # 重新生成 BGM 音频
+  segmentation_chunks: 6           # 多智能体分割的块数
+  clip_duration: 30                # 每个 BGM 片段的时长（秒）
+  inference_steps: 8               # ACE-Step 扩散步数（turbo=8, base=50）
+  volume_db: -8.0                  # BGM 全局音量（dB，负值越小越安静）

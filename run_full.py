@@ -17,6 +17,16 @@ import yaml
 # 添加 backend 到 Python 路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
 
+from app.core.bgm_mixer import mix_bgm
+from app.core.bgm_segmenter import (
+    DEFAULT_OUTPUT_PATH as BGM_SEGMENTS_PATH,
+    label_bgm_types,
+    load_segments,
+    save_segments,
+    segment_novel_chunked,
+    validate_segments,
+)
+from app.core.ollama_client import OllamaClient, OllamaConfig
 from app.core.parser import parse
 from app.core.splicer import AudioSplicer
 from pydub import AudioSegment
@@ -451,7 +461,7 @@ def fallback_pyttsx3(tasks: list, segments_dir: Path) -> list:
     return results
 
 
-def step_splice(config: dict, segments: list) -> str:
+def step_splice(config: dict, segments: list) -> tuple:
     """步骤5：音频拼接"""
     t0 = time.time()
 
@@ -477,6 +487,142 @@ def step_splice(config: dict, segments: list) -> str:
     return output_path, duration
 
 
+def build_ollama_client(config: dict) -> OllamaClient:
+    """从配置构建 OllamaClient."""
+    raw = config.get("ollama", {})
+    ollama_config = OllamaConfig(
+        base_url=raw.get("base_url", "http://localhost:11434"),
+        model=raw.get("model", "qwen3:4b"),
+        timeout=int(raw.get("timeout", 120)),
+        retries=int(raw.get("retries", 2)),
+        retry_delay=float(raw.get("retry_delay", 5.0)),
+    )
+    return OllamaClient(ollama_config)
+
+
+def step_bgm_segmentation(config: dict) -> list:
+    """Stage 7-a: BGM scene segmentation (multi-agent chunked)."""
+    from app.core.parser import parse as parse_novel
+
+    novel_path = config["novel"]["text_path"]
+    labels_path = config["novel"]["labels_path"]
+    with open(novel_path, "r", encoding="utf-8") as f:
+        novel_text = f.read()
+    with open(labels_path, "r", encoding="utf-8") as f:
+        labels = [line.strip() for line in f if line.strip()]
+    dialogues, _ = parse_novel(novel_text, labels)
+    total_lines = len(novel_text.splitlines())
+
+    bgm_config = config.get("bgm", {})
+    num_chunks = bgm_config.get("segmentation_chunks", 6)
+    output_path = BGM_SEGMENTS_PATH
+
+    if output_path.exists() and not bgm_config.get("force_segmentation", False):
+        segments = load_segments(output_path)
+        problems = validate_segments(segments, total_lines, 5, 50)
+        if not problems:
+            print(f"  使用缓存: {output_path} ({len(segments)} segments)")
+            return segments
+        print(f"  缓存无效，重新分割...")
+
+    print(f"  多智能体分割: {num_chunks} chunks...")
+    client = build_ollama_client(config)
+    segments = segment_novel_chunked(novel_text, client=client, num_chunks=num_chunks)
+    save_segments(output_path, segments)
+    print(f"  保存: {output_path} ({len(segments)} segments)")
+    return segments
+
+
+def step_bgm_labeling(config: dict, segments: list) -> list:
+    """Stage 7-b: BGM type labeling."""
+    bgm_config = config.get("bgm", {})
+    output_path = BGM_SEGMENTS_PATH
+
+    if not bgm_config.get("force_label", False):
+        already_labeled = all("bgm_type" in s for s in segments)
+        if already_labeled:
+            print(f"  所有 segment 已标注 BGM 类型，跳过")
+            return segments
+
+    print(f"  标注 {len(segments)} 个 segment 的 BGM 类型...")
+    client = build_ollama_client(config)
+    labeled = label_bgm_types(segments, client=client)
+    save_segments(output_path, labeled)
+
+    types_dist = {}
+    for s in labeled:
+        t = s.get("bgm_type", "unknown")
+        types_dist[t] = types_dist.get(t, 0) + 1
+    print(f"  标注完成: {json.dumps(types_dist, ensure_ascii=False)}")
+    return labeled
+
+
+def step_bgm_generation(config: dict) -> bool:
+    """Stage 7-c: BGM generation via ACE-Step (subprocess)."""
+    bgm_config = config.get("bgm", {})
+    force = bgm_config.get("force_generate", False)
+    clip_duration = bgm_config.get("clip_duration", 30)
+    inference_steps = bgm_config.get("inference_steps", 8)
+    bgm_dir = Path(config["output"]["dir"]) / "bgm"
+
+    # Check if already generated
+    if not force and bgm_dir.exists():
+        existing = list(bgm_dir.glob("*.mp3"))
+        if len(existing) >= 46:
+            print(f"  BGM clips 已生成 ({len(existing)} files)，跳过")
+            return True
+
+    ace_venv = Path("ACE-Step-1.5/.venv/Scripts/python.exe")
+    if not ace_venv.exists():
+        print(f"  ERROR: ACE-Step venv not found at {ace_venv}")
+        return False
+
+    cmd = [
+        str(ace_venv),
+        "run_bgm_generate.py",
+        "--duration", str(clip_duration),
+        "--inference-steps", str(inference_steps),
+    ]
+    if force:
+        cmd.append("--force")
+
+    print(f"  启动 ACE-Step BGM 生成 (subprocess)...")
+    t0 = time.time()
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+    elapsed = time.time() - t0
+
+    if result.returncode != 0:
+        stderr_tail = result.stderr[-300:] if result.stderr else ""
+        print(f"  ACE-Step 失败 (退出码 {result.returncode})")
+        print(f"  错误: {stderr_tail}")
+        return False
+
+    print(f"  ACE-Step 完成 [{elapsed:.1f}s]")
+    return True
+
+
+def step_bgm_mixing(config: dict) -> str:
+    """Stage 7-d: Mix BGM into speech."""
+    bgm_dir = Path(config["output"]["dir"]) / "bgm"
+    output_path = Path(config["output"]["dir"]) / "full_volume_bgm.mp3"
+    speech_path = Path(config["output"]["dir"]) / f"{config['output']['filename']}.{config['output']['format']}"
+
+    print(f"  混音 BGM → speech...")
+    mix_bgm(
+        speech_path=speech_path,
+        bgm_dir=bgm_dir,
+        manifest_path=bgm_dir / "bgm_manifest.json",
+        segments_path=BGM_SEGMENTS_PATH,
+        output_path=output_path,
+        config_path="config.yaml",
+    )
+
+    if output_path.exists():
+        size_mb = output_path.stat().st_size / (1024 * 1024)
+        print(f"  输出: {output_path} ({size_mb:.0f} MB)")
+    return str(output_path)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Novel Voice Cast")
     parser.add_argument("--config", default="config.yaml", help="配置文件路径")
@@ -499,7 +645,7 @@ def main():
         print(f"范围: 处理第 {args.range} 条对话")
 
     # 步骤1：解析
-    print(f"\n[1/4] 解析小说")
+    print(f"\n[1/6] 解析小说")
     dialogues, characters, novel_text = step_parse(config)
 
     # 应用限制或范围
@@ -527,11 +673,11 @@ def main():
             print(f"  debug 输出: {debug_path}")
 
     # 步骤2：性别识别
-    print(f"\n[2/4] 性别识别")
+    print(f"\n[2/6] 性别识别")
     gender_results = step_gender(config, characters, dialogues, novel_text)
 
     # 步骤3：情感标注
-    print(f"\n[3/4] 情感标注")
+    print(f"\n[3/6] 情感标注")
     emotion_enabled = config.get("features", {}).get("emotion_label", True)
     force_reprocess = config.get("features", {}).get("force_reprocess", False)
 
@@ -542,20 +688,49 @@ def main():
         emotion_results = step_emotion(config, dialogues, novel_text, force_reprocess=force_reprocess)
 
     # 步骤4：TTS 合成
-    print(f"\n[4/4] TTS 合成")
+    print(f"\n[4/6] TTS 合成")
     segments = step_tts(config, dialogues, gender_results, emotion_results)
 
     # 步骤5：音频拼接
-    print(f"\n[5/5] 音频拼接")
+    print(f"\n[5/6] 音频拼接")
     output_path, duration = step_splice(config, segments)
+
+    # ── BGM 流程（Stage 7） ──
+    bgm_enabled = config.get("bgm", {}).get("enabled", False)
+    bgm_output = None
+    if bgm_enabled:
+        print(f"\n{'=' * 60}")
+        print("Stage 7: BGM 背景音乐")
+        print("=" * 60)
+
+        # 7-a: BGM scene segmentation
+        print(f"\n[6/6] BGM 场景分割 (7-a)")
+        bgm_segments = step_bgm_segmentation(config)
+
+        # 7-b: BGM type labeling
+        print(f"\n[6/6] BGM 类型标注 (7-b)")
+        bgm_segments = step_bgm_labeling(config, bgm_segments)
+
+        # 7-c: BGM generation via ACE-Step
+        print(f"\n[6/6] BGM 音频生成 (7-c)")
+        generation_ok = step_bgm_generation(config)
+
+        if generation_ok:
+            # 7-d: BGM mixing
+            print(f"\n[6/6] BGM 混音 (7-d)")
+            bgm_output = step_bgm_mixing(config)
+        else:
+            print("  跳过 BGM 混音（生成失败）")
 
     # 汇总
     total_time = time.time() - total_start
     print("\n" + "=" * 60)
     print("完成")
     print("=" * 60)
-    print(f"  输出: {output_path}")
-    print(f"  时长: {format_time(duration)}")
+    print(f"  语音输出: {output_path}")
+    print(f"  语音时长: {format_time(duration)}")
+    if bgm_output:
+        print(f"  BGM 输出: {bgm_output}")
     print(f"  总耗时: {format_time(total_time)}")
     print("=" * 60)
 
