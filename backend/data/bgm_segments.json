@@ -1,0 +1,370 @@
+[
+  {
+    "start_line": 1,
+    "end_line": 45,
+    "title": "狼喻传说",
+    "description": "村落以狼喻麦穗的古老传统，带有神秘与负面色彩的氛围",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 46,
+    "end_line": 85,
+    "title": "商旅启程",
+    "description": "罗伦斯完成交易后独自行商的闲适与孤寂感",
+    "bgm_type": "daily",
+    "bgm_type_zh": "日常"
+  },
+  {
+    "start_line": 86,
+    "end_line": 135,
+    "title": "修道院邂逅",
+    "description": "商队与骑士的意外相遇，暗藏戒备与试探的紧张感",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 136,
+    "end_line": 185,
+    "title": "麦田祭典",
+    "description": "丰收祭典的喧闹场景，传统仪式与村民狂欢的热烈氛围",
+    "bgm_type": "daily",
+    "bgm_type_zh": "日常"
+  },
+  {
+    "start_line": 186,
+    "end_line": 255,
+    "title": "月夜邂逅",
+    "description": "罗伦斯与神秘少女赫萝的初次相遇，充满奇幻与紧张感",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 256,
+    "end_line": 325,
+    "title": "身份之谜",
+    "description": "赫萝展示狼性特征引发的惊悚与商人的理性博弈",
+    "bgm_type": "horror",
+    "bgm_type_zh": "恐怖"
+  },
+  {
+    "start_line": 326,
+    "end_line": 395,
+    "title": "故乡之思",
+    "description": "赫萝对北方故乡的追忆，交织着愤怒与乡愁的复杂情绪",
+    "bgm_type": "sad",
+    "bgm_type_zh": "悲伤"
+  },
+  {
+    "start_line": 396,
+    "end_line": 465,
+    "title": "商旅抉择",
+    "description": "商人罗伦斯面对超自然存在的理性权衡与情感挣扎",
+    "bgm_type": "daily",
+    "bgm_type_zh": "日常"
+  },
+  {
+    "start_line": 466,
+    "end_line": 611,
+    "title": "同行启程",
+    "description": "商队与狼女结盟的微妙平衡，开启未知旅程的期待感",
+    "bgm_type": "epic",
+    "bgm_type_zh": "史诗"
+  },
+  {
+    "start_line": 612,
+    "end_line": 711,
+    "title": "暴雨夜宿",
+    "description": "突如其来的暴雨迫使两人躲进教会，通过伪装身份引发紧张互动",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 712,
+    "end_line": 811,
+    "title": "篝火对话",
+    "description": "烘干衣物时的亲密交谈，通过马铃薯晚餐展现角色间的信任建立",
+    "bgm_type": "daily",
+    "bgm_type_zh": "日常"
+  },
+  {
+    "start_line": 812,
+    "end_line": 911,
+    "title": "商道博弈",
+    "description": "在教会遇到年轻商人杰廉，通过货币投机话题展现商战智慧",
+    "bgm_type": "comedy",
+    "bgm_type_zh": "滑稽"
+  },
+  {
+    "start_line": 912,
+    "end_line": 1122,
+    "title": "帕兹欧交易",
+    "description": "抵达河口城镇帕兹欧，通过貂皮交易展现商战智慧与角色成长",
+    "bgm_type": "epic",
+    "bgm_type_zh": "史诗"
+  },
+  {
+    "start_line": 1123,
+    "end_line": 1272,
+    "title": "酒吧密谈",
+    "description": "罗伦斯与赫萝在酒吧分析杰廉的银币交易提议，气氛逐渐紧张",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 1273,
+    "end_line": 1402,
+    "title": "货币调查",
+    "description": "兑换商处研究银币含银量变化，赫萝展现敏锐洞察力",
+    "bgm_type": "daily",
+    "bgm_type_zh": "日常"
+  },
+  {
+    "start_line": 1403,
+    "end_line": 1547,
+    "title": "阴谋揭露",
+    "description": "罗伦斯识破杰廉交易背后的庞大阴谋，决定联合米隆商行反击",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 1548,
+    "end_line": 1572,
+    "title": "商行谈判",
+    "description": "罗伦斯用合约说服米隆商行合作，化解貂皮事件遗留的隔阂",
+    "bgm_type": "epic",
+    "bgm_type_zh": "史诗"
+  },
+  {
+    "start_line": 1573,
+    "end_line": 1601,
+    "title": "追踪目标",
+    "description": "罗伦斯与赫萝在酒吧确认杰廉行踪，等待商行调查结果",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 1602,
+    "end_line": 1637,
+    "title": "时间焦虑",
+    "description": "赫萝担忧行动时间紧迫，罗伦斯分析商行调查效率",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 1638,
+    "end_line": 1672,
+    "title": "酒馆对话",
+    "description": "罗伦斯与赫萝借酒叙旧，赫萝流露对身份认同的困扰",
+    "bgm_type": "sad",
+    "bgm_type_zh": "悲伤"
+  },
+  {
+    "start_line": 1673,
+    "end_line": 1707,
+    "title": "友谊坦白",
+    "description": "赫萝吐露对帕斯罗村民的友情，罗伦斯暗自感慨",
+    "bgm_type": "romantic",
+    "bgm_type_zh": "浪漫"
+  },
+  {
+    "start_line": 1708,
+    "end_line": 1742,
+    "title": "商行决议",
+    "description": "米隆商行确认梅迪欧商行介入，罗伦斯商谈利益分配",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 1743,
+    "end_line": 1777,
+    "title": "宿醉同行",
+    "description": "赫萝宿醉状态下与罗伦斯共进简餐，气氛轻松诙谐",
+    "bgm_type": "comedy",
+    "bgm_type_zh": "滑稽"
+  },
+  {
+    "start_line": 1778,
+    "end_line": 1812,
+    "title": "开店梦想",
+    "description": "罗伦斯绘制商店蓝图，与赫萝探讨行商与定居的抉择",
+    "bgm_type": "daily",
+    "bgm_type_zh": "日常"
+  },
+  {
+    "start_line": 1813,
+    "end_line": 1847,
+    "title": "情感流露",
+    "description": "赫萝坦白对孤独的恐惧，罗伦斯以拥抱安抚",
+    "bgm_type": "romantic",
+    "bgm_type_zh": "浪漫"
+  },
+  {
+    "start_line": 1848,
+    "end_line": 1882,
+    "title": "危机降临",
+    "description": "神秘人跟踪罗伦斯与赫萝，被迫放弃马车逃亡",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 1883,
+    "end_line": 1917,
+    "title": "分头行动",
+    "description": "赫萝主动引开追兵，罗伦斯独自奔向米隆商行求援",
+    "bgm_type": "battle",
+    "bgm_type_zh": "战斗"
+  },
+  {
+    "start_line": 1918,
+    "end_line": 1952,
+    "title": "商行庇护",
+    "description": "罗伦斯在米隆商行获得临时保护，追兵被震慑退散",
+    "bgm_type": "epic",
+    "bgm_type_zh": "史诗"
+  },
+  {
+    "start_line": 1953,
+    "end_line": 1987,
+    "title": "真相揭露",
+    "description": "马贺特指出赫萝被俘实为陷阱，罗伦斯陷入绝望",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 1988,
+    "end_line": 2144,
+    "title": "绝境抉择",
+    "description": "罗伦斯在商行内焦灼等待，为救赫萝做最后准备",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 2145,
+    "end_line": 2244,
+    "title": "交易策略",
+    "description": "商讨利用银币交易作为筹码的紧张商战策略推演",
+    "bgm_type": "epic",
+    "bgm_type_zh": "史诗"
+  },
+  {
+    "start_line": 2245,
+    "end_line": 2394,
+    "title": "地下逃脱",
+    "description": "通过隐秘地下道实施营救行动的紧张逃亡节奏",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 2395,
+    "end_line": 2494,
+    "title": "新线索",
+    "description": "揭露亚伦多伯爵阴谋及赫萝被囚往事的悬疑转折",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 2495,
+    "end_line": 2587,
+    "title": "背叛与逃亡",
+    "description": "米隆商行背信弃义下的生死逃亡与情感爆发",
+    "bgm_type": "battle",
+    "bgm_type_zh": "战斗"
+  },
+  {
+    "start_line": 2588,
+    "end_line": 2622,
+    "title": "迷途困境",
+    "description": "错综复杂的地下道中迷失方向的焦虑氛围",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 2623,
+    "end_line": 2654,
+    "title": "突袭交锋",
+    "description": "遭遇伏击的激烈打斗与生死危机",
+    "bgm_type": "battle",
+    "bgm_type_zh": "战斗"
+  },
+  {
+    "start_line": 2655,
+    "end_line": 2689,
+    "title": "绝境对峙",
+    "description": "重伤被困水井的绝望与追兵逼近的压迫感",
+    "bgm_type": "sad",
+    "bgm_type_zh": "悲伤"
+  },
+  {
+    "start_line": 2690,
+    "end_line": 2734,
+    "title": "叶勒现身",
+    "description": "旧友出现引发道德抉择的戏剧性转折",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 2735,
+    "end_line": 2782,
+    "title": "赫萝觉醒",
+    "description": "狼人变身引发的震撼与追兵溃散的奇幻场面",
+    "bgm_type": "horror",
+    "bgm_type_zh": "恐怖"
+  },
+  {
+    "start_line": 2783,
+    "end_line": 2822,
+    "title": "离别时刻",
+    "description": "罗伦斯与赫萝情感冲突的悲伤分离场景",
+    "bgm_type": "sad",
+    "bgm_type_zh": "悲伤"
+  },
+  {
+    "start_line": 2823,
+    "end_line": 2889,
+    "title": "商行密谈",
+    "description": "疗伤后的利益分配谈判与阴谋揭露",
+    "bgm_type": "epic",
+    "bgm_type_zh": "史诗"
+  },
+  {
+    "start_line": 2890,
+    "end_line": 2953,
+    "title": "意外重逢",
+    "description": "卸货场重逢的喜悦与债务危机的幽默化解",
+    "bgm_type": "comedy",
+    "bgm_type_zh": "滑稽"
+  },
+  {
+    "start_line": 2954,
+    "end_line": 2975,
+    "title": "终幕回响",
+    "description": "黑暗中的追逐幻象与意识模糊的余韵",
+    "bgm_type": "suspense",
+    "bgm_type_zh": "悬疑"
+  },
+  {
+    "start_line": 2976,
+    "end_line": 3005,
+    "title": "疗伤苏醒",
+    "description": "伤愈后的回忆反思与商行对话的现实回归",
+    "bgm_type": "daily",
+    "bgm_type_zh": "日常"
+  },
+  {
+    "start_line": 3006,
+    "end_line": 3044,
+    "title": "交易揭秘",
+    "description": "巨额交易细节揭露与商人博弈的精妙算计",
+    "bgm_type": "epic",
+    "bgm_type_zh": "史诗"
+  },
+  {
+    "start_line": 3045,
+    "end_line": 3065,
+    "title": "重逢启程",
+    "description": "卸货场重逢的喜悦与债务危机的幽默化解",
+    "bgm_type": "comedy",
+    "bgm_type_zh": "滑稽"
+  }
+]

@@ -471,12 +471,17 @@ def _assistant_tool_message(result: ChatResult) -> Dict[str, Any]:
 
 
 def _normalise_segment(raw: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    result: Dict[str, Any] = {
         "start_line": int(raw["start_line"]),
         "end_line": int(raw["end_line"]),
         "title": str(raw["title"]).strip(),
         "description": str(raw["description"]).strip(),
     }
+    # Preserve BGM type annotations (set by label_bgm_types)
+    for key in ("bgm_type", "bgm_type_zh"):
+        if key in raw and raw[key] is not None:
+            result[key] = raw[key]
+    return result
 
 
 def _sorted_segments(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -508,3 +513,312 @@ def _extract_segments_from_content(content: str) -> List[Dict[str, Any]]:
             except (TypeError, ValueError, KeyError):
                 return []
     return []
+
+
+# ─── Multi-agent chunked segmentation ─────────────────────────────
+
+CHUNK_SYSTEM_PROMPT = """You are a novel scene segmentation agent. Given a section of a novel, identify each distinct scene or event and output them as a JSON array.
+
+Each segment must include:
+- start_line: 1-based line number where the scene starts
+- end_line: 1-based line number where the scene ends (inclusive)
+- title: short Chinese scene title (5-15 chars)
+- description: brief Chinese description of the scene's mood and atmosphere for BGM selection
+
+Rules:
+- Segment by plot/event/scene transitions, NOT by equal line count
+- Every line must be covered by exactly one segment (no gaps, no overlaps)
+- Lines are 1-based relative to the beginning of this section
+- The section starts at line 1
+
+Output ONLY valid JSON array, no other text. Example:
+[
+  {"start_line": 1, "end_line": 30, "title": "开场", "description": "主角登场，轻松明快的氛围"},
+  {"start_line": 31, "end_line": 80, "title": "冲突", "description": "矛盾爆发，紧张激烈的对峙"}
+]"""
+
+
+def segment_chunk_direct(
+    chunk_text: str,
+    base_line: int,
+    client: OllamaClient,
+    temperature: float = 0.3,
+    max_retries: int = 3,
+) -> List[Dict[str, Any]]:
+    """Segment one chunk by directly prompting the LLM (no tool calls).
+
+    The chunk text is included in the prompt; the LLM returns JSON segments
+    in one response.
+    """
+    chunk_lines = len(chunk_text.splitlines())
+    message = {
+        "role": "user",
+        "content": (
+            f"This section has {chunk_lines} lines (1-based, starting from line 1).\n\n"
+            f"Novel text:\n{chunk_text}\n\n"
+            "Output the scene segments as a JSON array:"
+        ),
+    }
+
+    for attempt in range(max_retries):
+        # Use chat without tools - send the prompt directly
+        result = client.chat(
+            messages=[{"role": "system", "content": CHUNK_SYSTEM_PROMPT}, message],
+            temperature=temperature,
+        )
+
+        segments = _extract_segments_from_content(result.content)
+        if not segments:
+            if attempt < max_retries - 1:
+                continue
+            raise SegmentationError(f"Could not parse segments from LLM output after {max_retries} attempts")
+
+        # Validate within-chunk coverage
+        problems = validate_segments(segments, total_lines=chunk_lines, min_segments=1, max_segments=20)
+        if not problems:
+            return _sorted_segments(segments)
+
+        # Remap error line numbers to chunk-local for clarity before retry
+        p_str = "; ".join(problems)
+        message = {"role": "user", "content": f"Validation errors: {p_str}. Please fix and output corrected JSON."}
+
+    raise SegmentationError("Failed to produce valid segments after retries")
+
+
+def _chunk_novel(
+    total_lines: int,
+    num_chunks: int = 4,
+    overlap: int = 10,
+) -> List[Tuple[int, int]]:
+    """Split a novel into roughly equal chunks with overlap.
+
+    Returns list of (chunk_start, chunk_end) where both are 1-based.
+    The overlap lines are shared between adjacent chunks.
+    """
+    if num_chunks <= 1:
+        return [(1, total_lines)]
+
+    base = total_lines // num_chunks
+    extra = total_lines % num_chunks
+
+    chunks: List[Tuple[int, int]] = []
+    current = 1
+    for i in range(num_chunks):
+        size = base + (1 if i < extra else 0)
+        chunk_start = current
+        chunk_end = min(total_lines, current + size - 1 + (overlap if i < num_chunks - 1 else 0))
+        chunks.append((chunk_start, chunk_end))
+        current += size
+
+    # ensure last chunk reaches the final line
+    chunks[-1] = (chunks[-1][0], total_lines)
+    return chunks
+
+
+def segment_novel_chunked(
+    text: str,
+    dialogues: Optional[List[Dict[str, Any]]] = None,
+    client: Optional[OllamaClient] = None,
+    num_chunks: int = 6,
+    temperature: float = 0.3,
+) -> List[Dict[str, Any]]:
+    """Segment a novel using multiple independent agent calls (same model).
+
+    The novel is split into chunks; each chunk is sent to the LLM in one
+    prompt (no iterative tool calling). Results are merged, deduplicated
+    at overlaps, and validated.
+
+    Args:
+        text: Full novel text.
+        dialogues: Not used in this direct-prompt mode (kept for API compat).
+        client: Ollama client.
+        num_chunks: How many chunks to divide the novel into.
+        temperature: LLM temperature.
+
+    Returns:
+        Validated, sorted list of segments covering the full novel.
+    """
+    client = client or OllamaClient()
+    lines = text.splitlines()
+    total_lines = len(lines)
+    chunks = _chunk_novel(total_lines, num_chunks, overlap=10)
+    all_segments: List[Dict[str, Any]] = []
+
+    print(f"  Multi-agent: {num_chunks} chunks, {total_lines} total lines")
+
+    for chunk_index, (chunk_start, chunk_end) in enumerate(chunks):
+        chunk_lines = chunk_end - chunk_start + 1
+        chunk_text = "\n".join(lines[chunk_start - 1 : chunk_end])
+        print(f"    Chunk {chunk_index + 1}: lines {chunk_start}-{chunk_end} ({chunk_lines} lines)")
+
+        try:
+            chunk_segments = segment_chunk_direct(
+                chunk_text=chunk_text,
+                base_line=chunk_start,
+                client=client,
+                temperature=temperature,
+            )
+        except SegmentationError as exc:
+            print(f"    Chunk {chunk_index + 1} failed: {exc}")
+            raise
+
+        # remap line numbers to full novel
+        for seg in chunk_segments:
+            seg["start_line"] += chunk_start - 1
+            seg["end_line"] += chunk_start - 1
+            all_segments.append(seg)
+
+        print(f"    Chunk {chunk_index + 1}: {len(chunk_segments)} segments")
+
+    # merge: at overlap boundaries, deduplicate
+    all_segments.sort(key=lambda s: s["start_line"])
+    merged = []
+    for seg in all_segments:
+        if merged and seg["start_line"] <= merged[-1]["end_line"]:
+            # overlap: extend if this segment covers more
+            if seg["end_line"] > merged[-1]["end_line"]:
+                merged[-1]["end_line"] = seg["end_line"]
+        else:
+            merged.append(seg)
+
+    # fill any remaining gaps between segments
+    for i in range(len(merged) - 1):
+        if merged[i + 1]["start_line"] > merged[i]["end_line"] + 1:
+            merged[i]["end_line"] = merged[i + 1]["start_line"] - 1
+
+    # final validation on full novel
+    problems = validate_segments(
+        merged,
+        total_lines=total_lines,
+        min_segments=num_chunks,
+        max_segments=num_chunks * 8,
+    )
+    if problems:
+        raise SegmentationError("Merged segments invalid: " + "; ".join(problems))
+
+    print(f"  Merged: {len(merged)} segments covering {total_lines} lines")
+    return _sorted_segments(merged)
+
+
+# ─── BGM type labeling (Stage 7-b) ──────────────────────────────
+
+BGM_TYPE_PROMPT = """You are a BGM type classification agent for a novel audiobook project.
+
+You will be given a list of scene segments from a novel. For each segment, classify
+its atmosphere into exactly one of these BGM types:
+
+- daily: 日常 — 轻松、温馨、日常聊天
+- suspense: 悬疑 — 紧张、神秘、诡异
+- battle: 战斗 — 热血、激昂、紧张
+- sad: 悲伤 — 忧伤、沉重、感人
+- romantic: 浪漫 — 温柔、甜蜜、抒情
+- epic: 史诗 — 宏大、壮丽、震撼
+- comedy: 滑稽 — 搞笑、欢快、调皮
+- horror: 恐怖 — 阴森、惊悚、不安
+
+Output a JSON array with the same number of items as input. Each item:
+  {"segment_index": <1-based index>, "bgm_type": "<type>"}
+
+Output ONLY valid JSON, no other text."""
+
+
+BGM_TYPE_MAP_ZH = {
+    "daily": "日常",
+    "suspense": "悬疑",
+    "battle": "战斗",
+    "sad": "悲伤",
+    "romantic": "浪漫",
+    "epic": "史诗",
+    "comedy": "滑稽",
+    "horror": "恐怖",
+}
+
+BGM_TYPE_MAP_EN = {v: k for k, v in BGM_TYPE_MAP_ZH.items()}
+
+
+def label_bgm_types(
+    segments: List[Dict[str, Any]],
+    novel_text: str = "",
+    client: Optional[OllamaClient] = None,
+    batch_size: int = 50,
+    temperature: float = 0.3,
+) -> List[Dict[str, Any]]:
+    """Classify each segment's atmosphere type using the LLM.
+
+    Segments are sent in batches of ``batch_size``. Each batch gets one
+    LLM call.
+
+    Args:
+        segments: List of segment dicts with title, description, start_line, end_line.
+        novel_text: Full novel text (optional — used for extra context).
+        client: Ollama client.
+        batch_size: Max segments per API call.
+        temperature: LLM temperature.
+
+    Returns:
+        Segments with ``bgm_type`` (English key) and ``bgm_type_zh`` (Chinese) added.
+    """
+    client = client or OllamaClient()
+    result_segments = [dict(seg) for seg in _sorted_segments(segments)]
+
+    for batch_start in range(0, len(result_segments), batch_size):
+        batch = result_segments[batch_start:batch_start + batch_size]
+        batch_info = [
+            {"segment_index": i + 1, "title": s["title"], "description": s["description"]}
+            for i, s in enumerate(batch)
+        ]
+
+        prompt = (
+            f"Classify these {len(batch)} scene segments:\n\n"
+            f"{json.dumps(batch_info, ensure_ascii=False, indent=2)}\n\n"
+            "Output exactly the same count of items with bgm_type added."
+        )
+
+        result = client.chat(
+            messages=[{"role": "system", "content": BGM_TYPE_PROMPT}, {"role": "user", "content": prompt}],
+            temperature=temperature,
+        )
+
+        types = _extract_bgm_types(result.content, len(batch))
+        if not types:
+            # fallback: all daily
+            types = [{"segment_index": i + 1, "bgm_type": "daily"} for i in range(len(batch))]
+
+        for item in types:
+            idx = item["segment_index"] - 1
+            if 0 <= idx < len(batch):
+                bgm_type = item.get("bgm_type", "daily")
+                bgm_type_zh = BGM_TYPE_MAP_ZH.get(bgm_type, "日常")
+                batch[idx]["bgm_type"] = bgm_type
+                batch[idx]["bgm_type_zh"] = bgm_type_zh
+
+    return result_segments
+
+
+def _extract_bgm_types(content: str, expected: int) -> Optional[List[Dict[str, Any]]]:
+    """Extract BGM type classification from LLM output."""
+    if not content:
+        return None
+
+    candidates = [content]
+    match = re.search(r"```(?:json)?\s*(.*?)```", content, flags=re.DOTALL | re.IGNORECASE)
+    if match:
+        candidates.insert(0, match.group(1))
+    match = re.search(r"(\[.*\])", content, flags=re.DOTALL)
+    if match:
+        candidates.append(match.group(1))
+
+    for candidate in candidates:
+        try:
+            raw = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(raw, list) and len(raw) == expected:
+            valid = True
+            for item in raw:
+                if not isinstance(item, dict) or "segment_index" not in item or "bgm_type" not in item:
+                    valid = False
+                    break
+            if valid:
+                return raw
+    return None
