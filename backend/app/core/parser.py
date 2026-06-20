@@ -89,13 +89,15 @@ def parse(text: str, labels: List[str] = None) -> Tuple[List[dict], List[str]]:
     current_chapter = ""
     dialogue_index = 0
 
-    for line in text.splitlines():
+    for line_number, line in enumerate(text.splitlines(), start=1):
         result = parse_line(line, current_chapter)
         current_chapter = result.get("chapter", current_chapter)
 
         if result["type"] == "chapter":
+            result["line"] = line_number
             chapters.append(result)
         elif result["type"] == "dialogue":
+            result["line"] = line_number
             # 检查一行是否有多个「」对话
             dialogue_texts = re.findall(r'「([^」]*)」', line)
             
@@ -125,6 +127,7 @@ def parse(text: str, labels: List[str] = None) -> Tuple[List[dict], List[str]]:
                         "chapter": current_chapter,
                         "text": dt,
                         "speaker": speaker,
+                        "line": line_number,
                     }
                     dialogues.append(dialogue_entry)
                     
@@ -158,6 +161,7 @@ def parse(text: str, labels: List[str] = None) -> Tuple[List[dict], List[str]]:
                     "chapter": result.get("chapter", ""),
                     "text": text,
                     "speaker": "旁白",
+                    "line": line_number,
                 })
                 if "旁白" not in seen:
                     seen.add("旁白")
