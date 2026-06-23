@@ -614,7 +614,7 @@ def step_bgm_mixing(config: dict) -> str:
         manifest_path=bgm_dir / "bgm_manifest.json",
         segments_path=BGM_SEGMENTS_PATH,
         output_path=output_path,
-        config_path="config.yaml",
+        config_path="config/config.yaml",
     )
 
     if output_path.exists():
@@ -625,7 +625,7 @@ def step_bgm_mixing(config: dict) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Novel Voice Cast")
-    parser.add_argument("--config", default="config.yaml", help="配置文件路径")
+    parser.add_argument("--config", default="config/config.yaml", help="配置文件路径")
     parser.add_argument("--limit", type=int, default=0, help="只处理前N条对话（0=全部）")
     parser.add_argument("--range", type=str, default="", help="处理对话范围，如 100-200")
     args = parser.parse_args()

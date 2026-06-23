@@ -15,17 +15,17 @@
 ## 流程
 
 ```
-config.yaml → run_full.py → 解析 → 性别识别 → 情感标注 → TTS合成 → 拼接 → 输出MP3
+config.yaml → scripts/run_full.py → 解析 → 性别识别 → 情感标注 → TTS合成 → 拼接 → 输出MP3
 ```
 
 ## 快速开始
 
 ```bash
 # 1. 编辑配置
-vim config.yaml
+vim config/config.yaml
 
 # 2. 运行
-python run_full.py
+python scripts/run_full.py
 ```
 
 ## 技术栈
@@ -40,4 +40,4 @@ python run_full.py
 
 ## 项目状态
 
-✅ 核心流程已完成。详见 [`方案.md`](方案.md)。
+✅ 核心流程已完成。详见 [`docs/方案.md`](docs/方案.md)。

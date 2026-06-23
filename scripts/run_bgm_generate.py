@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # ── Path setup: add ACE-Step project to sys.path ──────────────────────
-ACE_DIR = Path(__file__).resolve().parent / "ACE-Step-1.5"
+ACE_DIR = Path(__file__).resolve().parent.parent / "ACE-Step-1.5"
 PROJECT_ROOT = ACE_DIR.parent  # One level up: the novel-voice-cast root
 os.chdir(str(ACE_DIR))
 sys.path.insert(0, str(ACE_DIR))

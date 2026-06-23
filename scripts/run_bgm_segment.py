@@ -59,7 +59,7 @@ def parse_novel(config: dict) -> tuple[list, list, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="BGM scene segmentation and type labeling")
-    parser.add_argument("--config", default="config.yaml", help="Config YAML path")
+    parser.add_argument("--config", default="config/config.yaml", help="Config YAML path")
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT_PATH), help="Output JSON cache path")
     parser.add_argument("--force", action="store_true", help="Regenerate even if output exists")
     parser.add_argument("--min-segments", type=int, default=5, help="Minimum accepted scene segments")

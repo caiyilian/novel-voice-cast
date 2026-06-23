@@ -56,7 +56,7 @@ BGM_VOLUME_MAP: Dict[str, float] = {
 }
 
 
-def load_config(config_path: str = "config.yaml") -> dict:
+def load_config(config_path: str = "config/config.yaml") -> dict:
     import yaml
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -234,7 +234,7 @@ def mix_bgm(
     manifest_path: Path = DEFAULT_MANIFEST_PATH,
     segments_path: Path = DEFAULT_SEGMENTS_PATH,
     output_path: Path = DEFAULT_OUTPUT_PATH,
-    config_path: str = "config.yaml",
+    config_path: str = "config/config.yaml",
 ) -> float:
     """Mix BGM into the *already-spliced* speech file.
 
@@ -389,7 +389,7 @@ if __name__ == "__main__":
     p.add_argument("--segments", default=str(DEFAULT_SEGMENTS_PATH))
     p.add_argument("--output", default=str(DEFAULT_OUTPUT_PATH))
     p.add_argument("--manifest", default=str(DEFAULT_MANIFEST_PATH))
-    p.add_argument("--config", default="config.yaml")
+    p.add_argument("--config", default="config/config.yaml")
     args = p.parse_args()
     mix_bgm(speech_path=Path(args.speech), bgm_dir=Path(args.bgm_dir),
             manifest_path=Path(args.manifest), segments_path=Path(args.segments),

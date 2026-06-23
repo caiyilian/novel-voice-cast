@@ -198,7 +198,7 @@ def step_denoise(config: dict, audio_path: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Novel Voice Cast")
-    parser.add_argument("--config", default="config.yaml", help="配置文件路径")
+    parser.add_argument("--config", default="config/config.yaml", help="配置文件路径")
     args = parser.parse_args()
 
     total_start = time.time()
