@@ -34,3 +34,8 @@ backend/tests/fixtures/*.wav
 # Large model files (IndexTTS2 + VoxCPM + DeepFilterNet)
 backend/models/
 whl_files/
+
+# API Keys (never commit)
+config/agnes_api_key
+config/sensenova_apikeys
+.githubtoken.txt
