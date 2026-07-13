@@ -27,6 +27,7 @@ from scripts.generate_video import (  # noqa: E402
     build_subtitle_filter,
     build_video_filter_chain,
     main as generate_video,
+    probe_media_duration,
     validate_audio_timeline,
     write_slideshow_concat,
 )
@@ -411,7 +412,7 @@ def test_ffmpeg_filter_chain_expands_sparse_frames_before_subtitles(tmp_path):
     assert "FontSize=20" in chain
     assert "WrapStyle=2" in chain
     assert chain.endswith("wrap_unicode=1")
-    assert build_video_filter_chain() == "scale=896:1152"
+    assert build_video_filter_chain() == "scale=896:1152,fps=25"
 
 
 def test_audio_timeline_validation_rejects_accumulated_drift():
@@ -554,6 +555,7 @@ def test_generate_video_cli_burns_subtitles_end_to_end(tmp_path):
 
     assert result == 0
     assert output.stat().st_size > 1000
+    assert abs(probe_media_duration(output) - probe_media_duration(audio)) < 0.25
     assert "[旁白]" in subtitle_output.read_text(encoding="utf-8")
 
     # The compatibility mode must not require either subtitle input.

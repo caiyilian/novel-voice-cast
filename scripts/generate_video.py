@@ -160,11 +160,10 @@ def build_subtitle_filter(
 def build_video_filter_chain(subtitle_filter: str | None = None) -> str:
     """Build the ordered filter chain required by the sparse slideshow input."""
 
-    filters = ["scale=896:1152"]
+    filters = ["scale=896:1152", "fps=25"]
     if subtitle_filter:
         # Expand the sparse slideshow before libass so cues can change while
         # one illustration remains visible.
-        filters.append("fps=25")
         filters.append(subtitle_filter)
     return ",".join(filters)
 
@@ -605,6 +604,7 @@ def main(argv: list[str] | None = None):
         "-c:a", "aac",
         "-b:a", "192k",
         "-shortest",
+        "-t", f"{total_duration_ms / 1000:.3f}",
         str(args.output),
     ]
 
@@ -621,6 +621,15 @@ def main(argv: list[str] | None = None):
     elapsed = time.time() - t0
 
     if result.returncode == 0:
+        rendered_duration_s = probe_media_duration(args.output)
+        expected_duration_s = total_duration_ms / 1000
+        if abs(rendered_duration_s - expected_duration_s) > 0.25:
+            print(
+                "\n错误: 成片时长与音频时间轴不一致: "
+                f"video={rendered_duration_s:.3f}s, "
+                f"timeline={expected_duration_s:.3f}s"
+            )
+            return 1
         size_mb = args.output.stat().st_size / 1024 / 1024
         print(f"\n完成! ({elapsed:.0f} 秒, {size_mb:.0f} MB)")
         print(f"输出: {args.output}")
