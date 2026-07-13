@@ -473,7 +473,7 @@ def step_splice(config: dict, segments: list) -> tuple:
     output_path = str(Path(output_dir) / f"{filename}.{fmt}")
     print(f"  输出格式: {fmt} ({bitrate})")
 
-    splicer = AudioSplicer()
+    splicer = AudioSplicer(output_bitrate=bitrate)
     final_audio = splicer.splice(segments, output_path=output_path)
 
     # 获取文件大小

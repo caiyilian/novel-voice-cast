@@ -7,22 +7,20 @@ Strategy (robust against timing errors):
   3. Group dialogues by BGM segment (from bgm_segments.json) and compute
      each segment's time interval.
   4. Extract that portion from the EXISTING speech-only file
-     ``full_volume.mp3`` (a WAV in disguise — produced by AudioSplicer,
-     proven correct at ~6 h) via ffmpeg (fast seek on PCM).
+     ``full_volume.mp3`` via ffmpeg. The input format is auto-detected so both
+     legacy WAV-disguised files and genuine MP3 output are accepted.
   5. Mix the BGM clip into the extracted portion (loop/trim BGM as needed)
      via pydub, applying per-type volume and crossfade.
-  6. Concatenate all mixed portions back into one MP3 via pydub.
+  6. Concatenate all mixed portions back into one MP3 with ffmpeg's concat
+     demuxer, keeping memory use independent of the full programme length.
 
 The output duration exactly matches the speech-only file.
 """
 from __future__ import annotations
 
 import json
-import os
-import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -31,7 +29,15 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydub import AudioSegment
 
 from app.core.parser import parse
-from app.core.splicer import GAP_DIALOGUE, GAP_PARAGRAPH, GAP_CHAPTER, FADE_DURATION
+from app.core.splicer import (
+    FADE_DURATION,
+    GAP_CHAPTER,
+    GAP_DIALOGUE,
+    GAP_PARAGRAPH,
+    concat_wav_files_ffmpeg,
+    probe_audio_duration,
+)
+from app.core.timeline import build_contiguous_intervals, gap_between_segments
 
 # ─── Defaults ──────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -42,6 +48,11 @@ DEFAULT_SPEECH_PATH = PROJECT_ROOT / "output/full_volume.mp3"
 DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "output/full_volume_bgm.mp3"
 
 CROSSFADE_MS = 3000
+BGM_MIX_CHUNK_MS = 5 * 60 * 1000
+SPEECH_TIMELINE_TOLERANCE_SECONDS = 1.0
+MIX_SAMPLE_RATE = 44100
+MIX_CHANNELS = 2
+MIX_SAMPLE_WIDTH = 2
 
 BGM_VOLUME_MAP: Dict[str, float] = {
     "suspense": -11.0,  # reduced by 3dB from -8.0
@@ -80,8 +91,8 @@ def _calc_dialogue_duration(wav: Path) -> int:
     try:
         seg = AudioSegment.from_file(str(wav))
         return len(seg)
-    except Exception:
-        return 1000
+    except Exception as exc:
+        raise RuntimeError(f"Cannot read dialogue segment duration: {wav}") from exc
 
 
 def _compute_dialogue_timestamps(
@@ -95,17 +106,14 @@ def _compute_dialogue_timestamps(
         starts.append(offset)
         dur = _calc_dialogue_duration(segments_dir / f"{i:05d}.wav")
         ends.append(offset + dur)
-        # Gap after this dialogue (AudioSplicer applies fade *after* gap… but gap is between)
-        fade = min(FADE_DURATION, dur // 2)
         if i < n - 1:
-            prev_ch = chapters[i]
-            curr_ch = chapters[i + 1]
-            if curr_ch != prev_ch:
-                gap = GAP_CHAPTER
-            elif i > 0 and chapters[i] != chapters[i - 1]:
-                gap = GAP_PARAGRAPH
-            else:
-                gap = GAP_DIALOGUE
+            gap = gap_between_segments(
+                {"chapter": chapters[i]},
+                {"chapter": chapters[i + 1]},
+                gap_dialogue=GAP_DIALOGUE,
+                gap_paragraph=GAP_PARAGRAPH,
+                gap_chapter=GAP_CHAPTER,
+            )
             offset += dur + gap
         else:
             offset += dur
@@ -119,13 +127,10 @@ def _extract_audio_segment_ffmpeg(
     start_s = start_ms / 1000.0
     dur_s = (end_ms - start_ms) / 1000.0
     if dur_s <= 0:
-        # Zero-length segment: write minimal silence
-        AudioSegment.silent(duration=10).export(str(dst), format="wav")
-        return
+        raise ValueError(f"invalid audio extraction interval: {start_ms}..{end_ms}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     result = subprocess.run([
         "ffmpeg", "-y",
-        "-f", "wav",  # force WAV input (file has .mp3 extension but is actually PCM)
         "-ss", f"{start_s:.3f}",
         "-i", str(src),
         "-t", f"{dur_s:.3f}",
@@ -136,39 +141,104 @@ def _extract_audio_segment_ffmpeg(
         str(dst),
     ], capture_output=True, text=True, timeout=600)
     if result.returncode != 0 or not dst.exists() or dst.stat().st_size < 100:
-        print(f"  ffmpeg extract failed [{start_s:.1f}s-{start_s+dur_s:.1f}s]: {result.stderr[:200]}")
-        # Fallback: write silence of expected duration
-        AudioSegment.silent(duration=int(dur_s * 1000)).export(str(dst), format="wav")
+        raise RuntimeError(
+            f"ffmpeg extract failed [{start_s:.1f}s-{start_s + dur_s:.1f}s]: "
+            f"{result.stderr[:500]}"
+        )
 
 
-def _prepare_bgm(bgm_clips: List[AudioSegment], target_ms: int) -> AudioSegment:
+def _prepare_bgm(
+    bgm_clips: List[AudioSegment],
+    target_ms: int,
+    *,
+    offset_ms: int = 0,
+) -> AudioSegment:
     """Build a BGM track by cycling through multiple clips for variety.
 
     Each clip in ``bgm_clips`` is ~30s. For a long segment (e.g. 600s),
     this cycles through the available clips so the same loop isn't
     repeated monotonously.
     """
+    if target_ms < 0:
+        raise ValueError(f"target BGM duration must be non-negative: {target_ms}")
+    if offset_ms < 0:
+        raise ValueError(f"BGM offset must be non-negative: {offset_ms}")
+
+    bgm_clips = [clip for clip in bgm_clips if len(clip) > 0]
     if not bgm_clips:
         return AudioSegment.silent(duration=target_ms)
-    if len(bgm_clips) == 1:
-        clip = bgm_clips[0]
-        repeats = max(1, (target_ms // len(clip)) + 1)
-        return (clip * repeats)[:target_ms]
+    if target_ms == 0:
+        return bgm_clips[0][:0]
 
-    # Multiple clips: cycle through them
-    combined = AudioSegment.empty()
-    total_unique = sum(len(c) for c in bgm_clips)
-    repeats = (target_ms // total_unique) + 1
-    for _ in range(repeats):
-        for clip in bgm_clips:
-            combined += clip
-    return combined[:target_ms]
+    if len(bgm_clips) == 1:
+        cycle = bgm_clips[0]
+    else:
+        # Build one short cycle in a single linear copy. The caller processes
+        # long programme intervals in bounded chunks, so the repetition below
+        # never grows with the complete interval or novel duration.
+        synced_clips = AudioSegment._sync(*bgm_clips)
+        cycle = synced_clips[0]._spawn(b"".join(clip.raw_data for clip in synced_clips))
+
+    # Work in frames rather than rounded millisecond lengths. MP3-decoded clips
+    # can have a fractional-millisecond tail; frame arithmetic prevents a tiny
+    # phase jump from accumulating at each processing-chunk boundary.
+    cycle_frames = int(cycle.frame_count())
+    offset_frames = int(cycle.frame_count(ms=offset_ms)) % cycle_frames
+    target_frames = int(cycle.frame_count(ms=target_ms))
+    required_frames = offset_frames + target_frames
+    repeats = max(1, (required_frames + cycle_frames - 1) // cycle_frames)
+    start_byte = offset_frames * cycle.frame_width
+    end_byte = (offset_frames + target_frames) * cycle.frame_width
+    return cycle._spawn((cycle.raw_data * repeats)[start_byte:end_byte])
+
+
+def _iter_interval_chunks(
+    start_ms: int,
+    end_ms: int,
+    *,
+    chunk_ms: int = BGM_MIX_CHUNK_MS,
+) -> List[Tuple[int, int]]:
+    """Split an interval into adjacent, bounded chunks."""
+    if end_ms <= start_ms:
+        raise ValueError(f"invalid BGM interval: {start_ms}..{end_ms}")
+    if chunk_ms <= 0:
+        raise ValueError(f"BGM chunk duration must be positive: {chunk_ms}")
+
+    return [
+        (chunk_start, min(chunk_start + chunk_ms, end_ms))
+        for chunk_start in range(start_ms, end_ms, chunk_ms)
+    ]
+
+
+def _validate_speech_timeline(
+    speech_path: Path,
+    expected_duration_seconds: float,
+    *,
+    tolerance_seconds: float = SPEECH_TIMELINE_TOLERANCE_SECONDS,
+) -> float:
+    """Ensure the speech file and its segment-derived timeline agree."""
+    if tolerance_seconds < 0:
+        raise ValueError("speech timeline tolerance must be non-negative")
+    actual_duration = probe_audio_duration(speech_path)
+    drift = abs(actual_duration - expected_duration_seconds)
+    if drift > tolerance_seconds:
+        raise RuntimeError(
+            "Speech audio duration does not match the WAV segment timeline: "
+            f"speech={actual_duration:.3f}s, timeline={expected_duration_seconds:.3f}s, "
+            f"drift={drift:.3f}s (allowed {tolerance_seconds:.3f}s). "
+            "Regenerate the spliced speech audio before mixing BGM."
+        )
+    return actual_duration
 
 
 def _mix_audio_segment(
     speech_path: Path, bgm_clips: Optional[List[AudioSegment]],
     bgm_type: str, prev_bgm_type: Optional[str], output_path: Path,
     volume_db: float = -8.0,
+    *,
+    bgm_offset_ms: int = 0,
+    fade_in_at_start: bool = True,
+    fade_out_at_end: bool = True,
 ) -> None:
     """Mix BGM into a speech segment and export as WAV.
 
@@ -179,53 +249,71 @@ def _mix_audio_segment(
         prev_bgm_type: Previous segment's BGM type (for crossfade detection).
         output_path: Where to save the mixed segment (WAV).
         volume_db: Global volume baseline from config; per-type adjustment is added on top.
+        bgm_offset_ms: Position in the original BGM interval, preserving the
+            loop when a long interval is processed in several chunks.
+        fade_in_at_start: Allow the existing BGM fade-in at this chunk start.
+        fade_out_at_end: Apply the existing BGM and speech fade-outs at this
+            chunk end. Internal chunk boundaries disable both fades.
     """
     try:
         speech = AudioSegment.from_file(str(speech_path))
-    except Exception:
-        speech = AudioSegment.silent(duration=1000)
+    except Exception as exc:
+        raise RuntimeError(f"Cannot load extracted speech segment: {speech_path}") from exc
 
     if bgm_clips:
         dur = len(speech)
-        bgm = _prepare_bgm(bgm_clips, dur)
+        bgm = _prepare_bgm(bgm_clips, dur, offset_ms=bgm_offset_ms)
 
         # Volume: config baseline + per-type adjustment
         type_adj = BGM_VOLUME_MAP.get(bgm_type, -8.0)  # already lowered
         bgm = bgm.apply_gain(volume_db + type_adj)
 
         # Fade-in at start (first segment or when type changes)
-        if prev_bgm_type is None or bgm_type != prev_bgm_type:
+        if fade_in_at_start and (prev_bgm_type is None or bgm_type != prev_bgm_type):
             fade_in_ms = min(CROSSFADE_MS, dur // 4)
             if fade_in_ms > 0 and len(bgm) > fade_in_ms:
                 bgm = bgm.fade_in(fade_in_ms)
 
         # Fade-out at end (always, for smooth transition between segments)
-        fade_out_ms = min(CROSSFADE_MS, dur // 4)
-        if fade_out_ms > 0 and len(bgm) > fade_out_ms:
-            bgm = bgm.fade_out(fade_out_ms)
+        if fade_out_at_end:
+            fade_out_ms = min(CROSSFADE_MS, dur // 4)
+            if fade_out_ms > 0 and len(bgm) > fade_out_ms:
+                bgm = bgm.fade_out(fade_out_ms)
 
         speech = speech.overlay(bgm, position=0)
 
     # Speech fade-out (keep existing behavior)
-    fade_len = min(FADE_DURATION, len(speech) // 2)
-    if fade_len > 0:
-        speech = speech.fade_out(fade_len)
+    if fade_out_at_end:
+        fade_len = min(FADE_DURATION, len(speech) // 2)
+        if fade_len > 0:
+            speech = speech.fade_out(fade_len)
+    # FFmpeg's concat demuxer requires every input stream to have matching
+    # parameters. Intervals without a BGM overlay would otherwise stay mono
+    # while intervals with stereo BGM become stereo.
+    speech = (
+        speech.set_frame_rate(MIX_SAMPLE_RATE)
+        .set_channels(MIX_CHANNELS)
+        .set_sample_width(MIX_SAMPLE_WIDTH)
+    )
     speech.export(str(output_path), format="wav")
 
 
-def _concat_via_pydub(
-    wav_files: List[Path], output_mp3: Path,
+def _concat_via_ffmpeg(
+    wav_files: List[Path], output_mp3: Path, expected_duration: float,
 ) -> float:
-    """Concatenate WAVs using pydub (one file at a time, memory-safe)."""
-    output_mp3.parent.mkdir(parents=True, exist_ok=True)
-    combined = AudioSegment.empty()
-
-    for wav in wav_files:
-        seg = AudioSegment.from_file(str(wav))
-        combined += seg
-
-    combined.export(str(output_mp3), format="mp3", bitrate="192k", parameters=["-ar", "44100", "-ac", "2"])
-    return len(combined) / 1000.0
+    """Stream-concatenate WAVs into one MP3 and validate its timeline."""
+    if output_mp3.suffix.lower() != ".mp3":
+        raise ValueError(f"BGM output path must use the .mp3 extension: {output_mp3}")
+    return concat_wav_files_ffmpeg(
+        wav_files,
+        output_mp3,
+        output_format="mp3",
+        sample_rate=MIX_SAMPLE_RATE,
+        channels=MIX_CHANNELS,
+        bitrate="192k",
+        expected_duration_seconds=expected_duration,
+        duration_tolerance_seconds=0.1,
+    )
 
 
 def mix_bgm(
@@ -241,6 +329,14 @@ def mix_bgm(
     Uses ``full_volume.mp3`` as source of truth for the audio timeline.
     """
     t0 = time.time()
+    speech_path = Path(speech_path)
+    bgm_dir = Path(bgm_dir)
+    manifest_path = Path(manifest_path)
+    segments_path = Path(segments_path)
+    output_path = Path(output_path)
+    if output_path.suffix.lower() != ".mp3":
+        raise ValueError(f"BGM output path must use the .mp3 extension: {output_path}")
+
     config = load_config(config_path)
     segments_dir = Path(config["output"]["dir"]) / "segments"
 
@@ -270,63 +366,57 @@ def mix_bgm(
             if (bgm_dir / f"001_{i}.mp3").exists():
                 clips_per_segment = max(clips_per_segment, i + 1)
 
-    # Cache: seg_idx -> list of AudioSegment clips
-
-    # Cache: seg_idx -> list of AudioSegment clips
-    bgm_cache: Dict[int, List[AudioSegment]] = {}
+    # Keep only lightweight paths here. Decoded PCM clips are loaded lazily for
+    # one interval and released before the next, rather than caching the entire
+    # novel's BGM set in memory.
+    bgm_files: Dict[int, List[Path]] = {}
     for i, s in enumerate(bgm_segments):
         seg_idx = i  # 0-based index, matches interval building
-        clips: List[AudioSegment] = []
+        clips: List[Path] = []
         for ci in range(clips_per_segment):
             fp = bgm_dir / f"{seg_idx + 1:03d}_{ci}.mp3"
             if fp.exists():
-                clips.append(AudioSegment.from_file(str(fp)))
+                clips.append(fp)
         if clips:
-            bgm_cache[seg_idx] = clips
-    total_clips = sum(len(c) for c in bgm_cache.values())
-    print(f"  BGM clips loaded: {total_clips} (across {len(bgm_cache)} segments, {clips_per_segment}/segment)")
+            bgm_files[seg_idx] = clips
+    total_clips = sum(len(c) for c in bgm_files.values())
+    print(
+        f"  BGM clips indexed: {total_clips} "
+        f"(across {len(bgm_files)} segments, {clips_per_segment}/segment)"
+    )
 
     # ── Compute dialogue timestamps ──
     print("  Computing dialogue timestamps...")
     starts, ends = _compute_dialogue_timestamps(n, chapters, segments_dir)
     total_speech_ms = ends[-1] if ends else 0
     print(f"  Speech duration: {total_speech_ms/1000:.0f}s = {total_speech_ms/3600000:.2f}h")
+    expected_duration = total_speech_ms / 1000.0
+    actual_speech_duration = _validate_speech_timeline(speech_path, expected_duration)
+    print(
+        "  Speech timeline verified: "
+        f"file={actual_speech_duration:.3f}s, segments={expected_duration:.3f}s"
+    )
 
-    # ── Build BGM intervals (one per BGM segment) ──
-    intervals: List[Dict] = []
-    current_seg_idx: Optional[int] = None
-    current_start: int = 0
-    last_di: int = -1
-
-    for di, line in enumerate(dialogues_lines):
-        seg_idx = None
+    # ── Build BGM intervals (one per contiguous BGM segment) ──
+    group_ids: List[int] = []
+    for line in dialogues_lines:
+        seg_idx: Optional[int] = None
         for si, seg in enumerate(bgm_segments):
             if seg["start_line"] <= line <= seg["end_line"]:
                 seg_idx = si
                 break
+        if seg_idx is None:
+            raise ValueError(f"BGM segment plan does not cover novel line {line}")
+        group_ids.append(seg_idx)
 
-        if seg_idx != current_seg_idx:
-            # Finalize previous interval
-            if current_seg_idx is not None:
-                intervals.append({
-                    "segment_index": current_seg_idx,
-                    "bgm_type": bgm_segments[current_seg_idx].get("bgm_type", "unknown"),
-                    "start_ms": current_start,
-                    "end_ms": ends[last_di] if last_di >= 0 else starts[di],
-                })
-            # Start new interval
-            current_seg_idx = seg_idx
-            current_start = starts[di]
-
-        last_di = di
-
-    # Final interval
-    if current_seg_idx is not None:
+    intervals = []
+    for interval in build_contiguous_intervals(group_ids, starts, ends):
+        seg_idx = int(interval["group_id"])
         intervals.append({
-            "segment_index": current_seg_idx,
-            "bgm_type": bgm_segments[current_seg_idx].get("bgm_type", "unknown"),
-            "start_ms": current_start,
-            "end_ms": ends[last_di] if last_di >= 0 else 0,
+            "segment_index": seg_idx,
+            "bgm_type": bgm_segments[seg_idx].get("bgm_type", "unknown"),
+            "start_ms": interval["start_ms"],
+            "end_ms": interval["end_ms"],
         })
 
     # ── Process each interval ──
@@ -340,36 +430,64 @@ def mix_bgm(
     volume_db = bgm_config.get("volume_db", -8.0)
     print(f"  BGM volume baseline: {volume_db} dB  (plus per-type adjustment)")
 
-    print(f"  Processing {len(intervals)} BGM intervals...")
-    for gi, iv in enumerate(intervals):
-        seg_idx = iv["segment_index"]
-        bgm_type = iv["bgm_type"]
-        start_ms = iv["start_ms"]
-        end_ms = iv["end_ms"]
+    try:
+        print(f"  Processing {len(intervals)} BGM intervals...")
+        for gi, iv in enumerate(intervals):
+            seg_idx = iv["segment_index"]
+            bgm_type = iv["bgm_type"]
+            start_ms = iv["start_ms"]
+            end_ms = iv["end_ms"]
 
-        # Extract speech portion via ffmpeg (fast, no memory overhead)
-        seg_wav = tmpdir / f"speech_{gi:04d}.wav"
-        _extract_audio_segment_ffmpeg(speech_path, start_ms, end_ms, seg_wav)
+            # Decode only the clips needed by this interval. A five-minute
+            # processing bound keeps pydub's speech/BGM/overlay copies bounded,
+            # while bgm_offset_ms keeps the loop sample-continuous across chunks.
+            clip_paths = bgm_files.get(seg_idx, [])
+            bgm_clips = [AudioSegment.from_file(str(path)) for path in clip_paths]
+            interval_chunks = _iter_interval_chunks(start_ms, end_ms)
+            for chunk_index, (chunk_start_ms, chunk_end_ms) in enumerate(interval_chunks):
+                chunk_tag = f"{gi:04d}_{chunk_index:03d}"
+                seg_wav = tmpdir / f"speech_{chunk_tag}.wav"
+                _extract_audio_segment_ffmpeg(
+                    speech_path,
+                    chunk_start_ms,
+                    chunk_end_ms,
+                    seg_wav,
+                )
 
-        # Load BGM clips (list, or None if no clips for this segment)
-        bgm_clips: Optional[List[AudioSegment]] = bgm_cache.get(seg_idx) if seg_idx is not None else None
+                out_wav = tmpdir / f"mix_{chunk_tag}.wav"
+                try:
+                    _mix_audio_segment(
+                        seg_wav,
+                        bgm_clips or None,
+                        bgm_type,
+                        prev_bgm_type,
+                        out_wav,
+                        volume_db=volume_db,
+                        bgm_offset_ms=chunk_start_ms - start_ms,
+                        fade_in_at_start=chunk_index == 0,
+                        fade_out_at_end=chunk_index == len(interval_chunks) - 1,
+                    )
+                finally:
+                    seg_wav.unlink(missing_ok=True)
+                wav_files.append(out_wav)
 
-        # Mix with volume_db from config
-        out_wav = tmpdir / f"mix_{gi:04d}.wav"
-        _mix_audio_segment(seg_wav, bgm_clips, bgm_type, prev_bgm_type, out_wav, volume_db=volume_db)
-        wav_files.append(out_wav)
+            prev_bgm_type = bgm_type
 
-        prev_bgm_type = bgm_type
+            if (gi + 1) % report_interval == 0 or gi == len(intervals) - 1:
+                dur_s = (end_ms - start_ms) / 1000
+                clip_count = len(clip_paths)
+                print(
+                    f"  [{gi+1:3d}/{len(intervals)}] {bgm_type:12s} | "
+                    f"{start_ms/1000:>7.1f}s - {end_ms/1000:>7.1f}s "
+                    f"({dur_s:7.1f}s, {clip_count} clips, {len(interval_chunks)} chunks)"
+                )
+            del bgm_clips
 
-        if (gi + 1) % report_interval == 0 or gi == len(intervals) - 1:
-            dur_s = (end_ms - start_ms) / 1000
-            clip_count = len(bgm_clips) if bgm_clips else 0
-            print(f"  [{gi+1:3d}/{len(intervals)}] {bgm_type:12s} | {start_ms/1000:>7.1f}s - {end_ms/1000:>7.1f}s ({dur_s:7.1f}s, {clip_count} clips)")
-
-    # ── Concatenate ──
-    print(f"\n  Concatenating {len(wav_files)} segments via pydub...")
-    duration = _concat_via_pydub(wav_files, output_path)
-    shutil.rmtree(tmpdir, ignore_errors=True)
+        # ── Concatenate ──
+        print(f"\n  Concatenating {len(wav_files)} segments via ffmpeg...")
+        duration = _concat_via_ffmpeg(wav_files, output_path, expected_duration)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
     elapsed = time.time() - t0
     file_mb = output_path.stat().st_size / (1024 * 1024) if output_path.exists() else 0

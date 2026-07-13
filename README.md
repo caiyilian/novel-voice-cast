@@ -28,6 +28,31 @@ vim config/config.yaml
 python scripts/run_full.py
 ```
 
+## 生成带字幕的插图视频
+
+完成 TTS 片段、最终混音、插图计划与插图生成后，直接运行：
+
+```bash
+python scripts/generate_video.py
+```
+
+脚本会按实际 WAV 时长及拼接间隔生成 SRT，并默认将中文字幕烧录进视频。每行最多 16 字、每条最多 2 行，长句优先在中文标点处拆分，显示格式为 `[说话人] 原文`。需要安装带 `libass` 字幕滤镜的 FFmpeg。
+
+所有输入均可通过命令行覆盖，例如：
+
+```bash
+python scripts/generate_video.py \
+  --novel novels/novel.txt \
+  --labels novels/labels.txt \
+  --segments-dir output/segments \
+  --plan output/illustration_plan.json \
+  --illustrations-dir output/illustrations \
+  --audio output/full_volume_bgm.mp3 \
+  --output output/illustration_video.mp4
+```
+
+如需保留无字幕版本，可增加 `--no-subtitles`。标签格式无法安全自动判断时，可显式指定 `--subtitle-label-mode line|parsed-line|dialogue`。
+
 ## 技术栈
 
 | 模块 | 选型 |
