@@ -19,6 +19,14 @@ def _load_config() -> dict:
     return config
 
 
+def _estimate_prompt_tokens(messages: list, tools: Optional[list] = None) -> int:
+    payload: dict[str, Any] = {"messages": messages}
+    if tools:
+        payload["tools"] = tools
+    chars = len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+    return max(1, (chars + 1) // 2)
+
+
 @dataclass(frozen=True)
 class OllamaConfig:
     base_url: str = ""
@@ -26,6 +34,8 @@ class OllamaConfig:
     timeout: int = 120
     retries: int = 2
     retry_delay: float = 5.0
+    context_window_tokens: int = 40000
+    max_tokens: int = 4096
 
     @classmethod
     def from_ip_config(cls) -> "OllamaConfig":
@@ -33,6 +43,12 @@ class OllamaConfig:
         return cls(
             base_url=raw.get("OLLAMA_BASE_URL", "http://localhost:11434"),
             model=raw.get("OLLAMA_MODEL", "qwen3:4b"),
+            context_window_tokens=int(
+                raw.get(
+                    "OLLAMA_CONTEXT_WINDOW",
+                    "40000" if raw.get("OLLAMA_MODEL") == "qwen3:32b" else "32768",
+                )
+            ),
         )
 
 
@@ -48,6 +64,7 @@ class ChatResult:
     content: str = ""
     tool_calls: list = field(default_factory=list)
     raw: dict = field(default_factory=dict)
+    usage: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -68,12 +85,27 @@ class OllamaClient:
             return base + "/chat/completions"
         return base + "/v1/chat/completions"
 
-    def chat(self, messages: list, tools: Optional[list] = None,
-             temperature: float = 0.3) -> ChatResult:
+    def chat(
+        self,
+        messages: list,
+        tools: Optional[list] = None,
+        temperature: float = 0.3,
+        max_tokens: Optional[int] = None,
+    ) -> ChatResult:
+        requested_max_tokens = int(max_tokens or self.config.max_tokens)
+        estimated_prompt = _estimate_prompt_tokens(messages, tools)
+        reserved = estimated_prompt + requested_max_tokens
+        if reserved > self.config.context_window_tokens:
+            raise OllamaError(
+                f"{self.config.model} request reserves about {reserved} tokens, "
+                f"exceeding its {self.config.context_window_tokens}-token context window"
+            )
         body = {
             "model": self.config.model,
-            "messages": messages,
+            "messages": json.loads(json.dumps(messages, ensure_ascii=False)),
             "temperature": temperature,
+            "max_tokens": requested_max_tokens,
+            "options": {"num_ctx": self.config.context_window_tokens},
         }
         if tools:
             body["tools"] = tools
@@ -94,7 +126,23 @@ class OllamaClient:
         msg = choices[0].get("message", {})
         content = msg.get("content", "") or ""
         tool_calls = self._parse_tool_calls(msg.get("tool_calls"))
-        return ChatResult(content=content, tool_calls=tool_calls, raw=raw)
+        usage = raw.get("usage") or {
+            "prompt_tokens": estimated_prompt,
+            "completion_tokens": max(0, len(content) // 2),
+            "estimated": True,
+        }
+        usage.setdefault(
+            "total_tokens",
+            int(usage.get("prompt_tokens", 0)) + int(usage.get("completion_tokens", 0)),
+        )
+        usage["context_window_tokens"] = self.config.context_window_tokens
+        usage["requested_max_tokens"] = requested_max_tokens
+        usage["context_utilization"] = round(
+            (int(usage.get("prompt_tokens", estimated_prompt)) + requested_max_tokens)
+            / self.config.context_window_tokens,
+            4,
+        )
+        return ChatResult(content=content, tool_calls=tool_calls, raw=raw, usage=usage)
 
     def check_connection(self) -> ConnectionStatus:
         try:

@@ -30,7 +30,6 @@ from pydub import AudioSegment
 
 from app.core.parser import parse
 from app.core.splicer import (
-    FADE_DURATION,
     GAP_CHAPTER,
     GAP_DIALOGUE,
     GAP_PARAGRAPH,
@@ -239,6 +238,7 @@ def _mix_audio_segment(
     bgm_offset_ms: int = 0,
     fade_in_at_start: bool = True,
     fade_out_at_end: bool = True,
+    energy: int = 3,
 ) -> None:
     """Mix BGM into a speech segment and export as WAV.
 
@@ -266,10 +266,15 @@ def _mix_audio_segment(
 
         # Volume: config baseline + per-type adjustment
         type_adj = BGM_VOLUME_MAP.get(bgm_type, -8.0)  # already lowered
-        bgm = bgm.apply_gain(volume_db + type_adj)
+        energy_adjustment = {1: -3.0, 2: -1.5, 3: 0.0, 4: 1.0, 5: 2.0}.get(
+            max(1, min(5, int(energy))), 0.0
+        )
+        bgm = bgm.apply_gain(volume_db + type_adj + energy_adjustment)
 
-        # Fade-in at start (first segment or when type changes)
-        if fade_in_at_start and (prev_bgm_type is None or bgm_type != prev_bgm_type):
+        # Every independently generated scene cue gets a gentle entrance. This
+        # prevents a hard waveform jump even when neighboring broad type labels
+        # happen to match but their instrumentation differs.
+        if fade_in_at_start:
             fade_in_ms = min(CROSSFADE_MS, dur // 4)
             if fade_in_ms > 0 and len(bgm) > fade_in_ms:
                 bgm = bgm.fade_in(fade_in_ms)
@@ -282,11 +287,8 @@ def _mix_audio_segment(
 
         speech = speech.overlay(bgm, position=0)
 
-    # Speech fade-out (keep existing behavior)
-    if fade_out_at_end:
-        fade_len = min(FADE_DURATION, len(speech) // 2)
-        if fade_len > 0:
-            speech = speech.fade_out(fade_len)
+    # Never fade narration at a music boundary. The old behavior attenuated
+    # the final syllable of every BGM scene and became audible with fine cues.
     # FFmpeg's concat demuxer requires every input stream to have matching
     # parameters. Intervals without a BGM overlay would otherwise stay mono
     # while intervals with stereo BGM become stereo.
@@ -415,6 +417,7 @@ def mix_bgm(
         intervals.append({
             "segment_index": seg_idx,
             "bgm_type": bgm_segments[seg_idx].get("bgm_type", "unknown"),
+            "energy": bgm_segments[seg_idx].get("bgm_energy", 3),
             "start_ms": interval["start_ms"],
             "end_ms": interval["end_ms"],
         })
@@ -435,6 +438,7 @@ def mix_bgm(
         for gi, iv in enumerate(intervals):
             seg_idx = iv["segment_index"]
             bgm_type = iv["bgm_type"]
+            energy = iv["energy"]
             start_ms = iv["start_ms"]
             end_ms = iv["end_ms"]
 
@@ -466,6 +470,7 @@ def mix_bgm(
                         bgm_offset_ms=chunk_start_ms - start_ms,
                         fade_in_at_start=chunk_index == 0,
                         fade_out_at_end=chunk_index == len(interval_chunks) - 1,
+                        energy=energy,
                     )
                 finally:
                     seg_wav.unlink(missing_ok=True)
