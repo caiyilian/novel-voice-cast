@@ -26,6 +26,7 @@ from scripts.generate_video import (  # noqa: E402
     build_source_line_timeline,
     build_subtitle_filter,
     build_video_filter_chain,
+    ffmpeg_supports_filter,
     main as generate_video,
     probe_media_duration,
     validate_audio_timeline,
@@ -497,8 +498,10 @@ def test_slideshow_concat_fails_on_missing_image(tmp_path):
 
 
 @pytest.mark.skipif(
-    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
-    reason="FFmpeg is required for the video integration test",
+    shutil.which("ffmpeg") is None
+    or shutil.which("ffprobe") is None
+    or not ffmpeg_supports_filter(shutil.which("ffmpeg") or "ffmpeg", "subtitles"),
+    reason="FFmpeg with the libass subtitles filter is required for the video integration test",
 )
 def test_generate_video_cli_burns_subtitles_end_to_end(tmp_path):
     novel = tmp_path / "novel.txt"
@@ -556,6 +559,7 @@ def test_generate_video_cli_burns_subtitles_end_to_end(tmp_path):
     assert result == 0
     assert output.stat().st_size > 1000
     assert abs(probe_media_duration(output) - probe_media_duration(audio)) < 0.25
+    assert not list(tmp_path.glob("*.rendering.*.mp4"))
     assert "[旁白]" in subtitle_output.read_text(encoding="utf-8")
 
     # The compatibility mode must not require either subtitle input.
@@ -578,3 +582,4 @@ def test_generate_video_cli_burns_subtitles_end_to_end(tmp_path):
     assert result == 0
     assert output_without_subtitles.stat().st_size > 1000
     assert not unused_subtitle.exists()
+    assert not list(tmp_path.glob("*.rendering.*.mp4"))

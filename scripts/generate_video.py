@@ -12,6 +12,8 @@
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 import time
@@ -168,12 +170,12 @@ def build_video_filter_chain(subtitle_filter: str | None = None) -> str:
     return ",".join(filters)
 
 
-def probe_media_duration(path: Path) -> float:
+def probe_media_duration(path: Path, ffprobe: str = "ffprobe") -> float:
     """Return media duration from ffprobe or raise with a useful error."""
 
     result = subprocess.run(
         [
-            "ffprobe",
+            ffprobe,
             "-v",
             "error",
             "-show_entries",
@@ -195,6 +197,23 @@ def probe_media_duration(path: Path) -> float:
     if duration <= 0:
         raise RuntimeError(f"媒体时长必须为正数: {duration}")
     return duration
+
+
+def ffmpeg_supports_filter(ffmpeg: str, filter_name: str) -> bool:
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-hide_banner", "-filters"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    output = result.stdout + result.stderr
+    return result.returncode == 0 and re.search(
+        rf"(?m)^\s*[TSC\.]+\s+{re.escape(filter_name)}\s+", output
+    ) is not None
 
 
 def validate_audio_timeline(
@@ -248,6 +267,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-subtitle-chars", type=positive_int, default=DEFAULT_MAX_CHARS)
     parser.add_argument("--max-subtitle-lines", type=positive_int, default=DEFAULT_MAX_LINES)
     parser.add_argument("--no-subtitles", action="store_true", help="生成不带字幕的视频")
+    parser.add_argument("--ffmpeg", default=os.environ.get("FFMPEG_BIN", "ffmpeg"))
+    parser.add_argument("--ffprobe", default=os.environ.get("FFPROBE_BIN", "ffprobe"))
     return parser.parse_args(argv)
 
 
@@ -491,7 +512,7 @@ def main(argv: list[str] | None = None):
         else:
             try:
                 line_ts = build_line_timestamps(args.segments_dir)
-                audio_dur_s = probe_media_duration(args.audio)
+                audio_dur_s = probe_media_duration(args.audio, args.ffprobe)
             except (OSError, RuntimeError, ValueError) as exc:
                 print(f"错误: 无法构建无字幕时间轴: {exc}")
                 return 1
@@ -558,7 +579,7 @@ def main(argv: list[str] | None = None):
     print("\n生成视频...")
     try:
         if audio_dur_s is None:
-            audio_dur_s = probe_media_duration(args.audio)
+            audio_dur_s = probe_media_duration(args.audio, args.ffprobe)
         if timeline_matches_segments:
             validate_audio_timeline(audio_dur_s, total_duration_ms)
     except (OSError, RuntimeError, ValueError) as exc:
@@ -590,8 +611,19 @@ def main(argv: list[str] | None = None):
     # The concat slideshow contains one sparse frame per illustration.  Expand
     # it to CFR *before* subtitles so libass can update cues while one still
     # image remains on screen.
+    if subtitle_filter and not ffmpeg_supports_filter(args.ffmpeg, "subtitles"):
+        print(
+            "错误: 当前 FFmpeg 不包含 subtitles filter。"
+            "请通过 --ffmpeg 指定带 libass/subtitles 的完整构建。"
+        )
+        return 1
+
+    render_output = args.output.with_name(
+        f"{args.output.stem}.rendering.{os.getpid()}{args.output.suffix}"
+    )
+    render_output.unlink(missing_ok=True)
     cmd = [
-        "ffmpeg", "-y", "-nostdin",
+        args.ffmpeg, "-y", "-nostdin",
         "-f", "concat",
         "-safe", "0",
         "-i", str(concat_file),
@@ -605,7 +637,7 @@ def main(argv: list[str] | None = None):
         "-b:a", "192k",
         "-shortest",
         "-t", f"{total_duration_ms / 1000:.3f}",
-        str(args.output),
+        str(render_output),
     ]
 
     print(f"  输出: {args.output}")
@@ -616,12 +648,13 @@ def main(argv: list[str] | None = None):
     try:
         result = subprocess.run(cmd)
     except OSError as exc:
+        render_output.unlink(missing_ok=True)
         print(f"\n错误: 无法启动 ffmpeg: {exc}")
         return 1
     elapsed = time.time() - t0
 
     if result.returncode == 0:
-        rendered_duration_s = probe_media_duration(args.output)
+        rendered_duration_s = probe_media_duration(render_output, args.ffprobe)
         expected_duration_s = total_duration_ms / 1000
         if abs(rendered_duration_s - expected_duration_s) > 0.25:
             print(
@@ -629,11 +662,14 @@ def main(argv: list[str] | None = None):
                 f"video={rendered_duration_s:.3f}s, "
                 f"timeline={expected_duration_s:.3f}s"
             )
+            render_output.unlink(missing_ok=True)
             return 1
+        os.replace(render_output, args.output)
         size_mb = args.output.stat().st_size / 1024 / 1024
         print(f"\n完成! ({elapsed:.0f} 秒, {size_mb:.0f} MB)")
         print(f"输出: {args.output}")
     else:
+        render_output.unlink(missing_ok=True)
         print(f"\n错误: ffmpeg 返回 {result.returncode}")
         return 1
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -15,6 +16,9 @@ from typing import Any, Dict, List, Optional
 BGM_SEGMENTS_PATH = Path("backend/data/bgm_segments.json")
 BGM_OUTPUT_DIR = Path("output/bgm")
 BGM_MANIFEST_PATH = BGM_OUTPUT_DIR / "bgm_manifest.json"
+BGM_GENERATION_VERSION = 3
+ACE_STEP_MODEL = "acestep-v15-sft"
+ACE_STEP_LM_MODEL = "acestep-5Hz-lm-1.7B"
 
 # ── ACE-Step caption prompts per BGM type ──────────────────────────────
 # Each caption is an English prompt optimized for ACE-Step's text2music mode.
@@ -68,6 +72,52 @@ def get_bgm_prompt(bgm_type: str) -> str:
     return BGM_PROMPTS.get(bgm_type, BGM_PROMPTS_DEFAULT)
 
 
+def build_segment_bgm_prompt(segment: Dict[str, Any]) -> str:
+    """Build a scene-specific instrumental caption from reviewed evidence."""
+    base = get_bgm_prompt(str(segment.get("bgm_type", "unknown")))
+    reviewed = re.sub(r"\s+", " ", str(segment.get("bgm_music_prompt", ""))).strip()
+    if reviewed:
+        prompt = reviewed[:260].rstrip(" ,.;:")
+        details = []
+        if segment.get("bgm_tempo_bpm"):
+            details.append(f"approximately {int(segment['bgm_tempo_bpm'])} BPM")
+        if segment.get("bgm_key_mode"):
+            details.append(str(segment["bgm_key_mode"]))
+        if segment.get("bgm_narrative_arc"):
+            details.append(f"{segment['bgm_narrative_arc']} dramatic arc")
+        detail_text = ", ".join(details)
+        suffix = (
+            f". {detail_text}." if detail_text else "."
+        ) + (
+            " Instrumental cinematic underscore only; sparse midrange, controlled bass, "
+            "restrained dynamics, no vocals, no lyrics, no spoken words, no sound effects, "
+            "no abrupt ending, and enough space for narration."
+        )
+        return prompt + suffix
+    evidence = str(segment.get("bgm_evidence", "")).split(" | Review:", 1)[0]
+    evidence = re.sub(r"^Primary:\s*", "", evidence, flags=re.IGNORECASE)
+    evidence = re.sub(r"\s+", " ", evidence).strip()
+    if len(evidence) > 220:
+        evidence = evidence[:220].rsplit(" ", 1)[0]
+    evidence = evidence.rstrip(" ,.;:")
+    if not evidence:
+        evidence = re.sub(r"\s+", " ", str(segment.get("description", ""))).strip()
+    if not evidence:
+        evidence = "The scene maintains the requested mood without a major emotional shift"
+
+    direction = (
+        f"{base}. Scene-specific emotional direction: {evidence}. "
+        "Instrumental underscore only, no vocals, restrained dynamics, "
+        "and a sparse arrangement that stays beneath spoken dialogue."
+    )
+    return direction
+
+
+def build_bgm_seed(segment_index: int, clip_index: int) -> int:
+    """Return a stable seed unique to a segment and its variation."""
+    return int(segment_index) * 10_007 + int(clip_index) * 1_009 + 17
+
+
 def load_segments(path: Path = BGM_SEGMENTS_PATH) -> List[Dict[str, Any]]:
     """Load bgm_segments.json."""
     with open(path, "r", encoding="utf-8") as f:
@@ -102,30 +152,43 @@ def build_manifest(
     total_duration: float,
     elapsed: float,
     clips_per_segment: int = 1,
+    output_dir: Path = BGM_OUTPUT_DIR,
+    inference_steps: int = 8,
+    guidance_scale: float = 7.0,
+    thinking: bool = True,
 ) -> Dict[str, Any]:
     """Build the BGM manifest dict."""
     segment_map: Dict[str, Dict[str, Any]] = {}
     for s in segments:
         idx = s.get("segment_index", 0)
         bgm_type = s.get("bgm_type", "unknown")
+        prompt = build_segment_bgm_prompt(s)
 
         clips_list = [
             {
                 "clip_index": ci,
                 "file": f"{idx:03d}_{ci}.mp3",
-                "path": str(BGM_OUTPUT_DIR / f"{idx:03d}_{ci}.mp3"),
+                "path": str(output_dir / f"{idx:03d}_{ci}.mp3"),
+                "seed": build_bgm_seed(idx, ci),
             }
             for ci in range(clips_per_segment)
         ]
 
         segment_map[str(idx)] = {
             "bgm_type": bgm_type,
+            "prompt": prompt,
             "duration": duration_per_segment,
             "clips": clips_list,
         }
     return {
+        "generation_version": BGM_GENERATION_VERSION,
+        "model": ACE_STEP_MODEL,
+        "lm_model": ACE_STEP_LM_MODEL if thinking else None,
+        "thinking": thinking,
+        "guidance_scale": guidance_scale,
         "segments": segment_map,
         "duration_per_segment": duration_per_segment,
+        "inference_steps": inference_steps,
         "total_segments": len(segments),
         "clips_per_segment": clips_per_segment,
         "total_bgm_duration": total_duration,
@@ -136,8 +199,17 @@ def build_manifest(
 def save_manifest(manifest: Dict[str, Any], path: Path = BGM_MANIFEST_PATH) -> Path:
     """Save BGM manifest to JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    temporary.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    for attempt in range(6):
+        try:
+            os.replace(temporary, path)
+            break
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.05 * (2**attempt))
     return path
