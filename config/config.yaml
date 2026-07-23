@@ -5,11 +5,12 @@ novel:
   text_path: "novels/novel.txt"        # 小说文本路径
   labels_path: "novels/labels.txt"     # 角色标注路径
 
-# Ollama 配置（用于性别识别、情感标注）
-ollama:
-  base_url: "http://172.31.102.237:11434"
-  model: "qwen3:32b"
-  timeout: 300
+# Issue #99 LLM stages use the six keys in config/sensenova_apikeys.
+# Gender, emotion, and BGM are pinned to SenseNova Flash Lite with no fallback.
+llm:
+  provider: "sensenova"
+  model: "sensenova-6.7-flash-lite"
+  rate_limit_cooldown_seconds: 15
 
 # 音色克隆引擎：voxcpm
 clone_engine: "voxcpm"
@@ -38,6 +39,7 @@ default_audio:
 features:
   gender_identify: true        # 自动识别性别
   emotion_label: true          # 情感标注（旁白跳过）
+  performance_direction: true  # 逐句多 Agent 表演指导（VoxCPM 自然语言控制）
   denoise: false               # 音频去噪
   force_reprocess: false       # 强制重新处理情感标注（忽略已有结果）
 
@@ -46,11 +48,65 @@ output:
   dir: "output"
   filename: "full_volume"
   format: "mp3"
-  bitrate: "96k"  # 压缩率适中，音质可接受
+  bitrate: "192k"  # 长篇成品保留足够的语音细节和 BGM 空间
 
 # TTS 配置（VoxCPM）
 voxcpm:
+  # All narrator and character lines use voice cloning. Explicit character
+  # references override the gender defaults above.
+  force_all_characters: true
   model_path: "backend/models/VoxCPM2"
+  module_path: "E:/projects/音色克隆/VoxCPM"
+  python: "E:/projects/音色克隆/VoxCPM/.venv/python.exe"
+  cfg_value: 2.0
+  inference_timesteps: 10
+  normalize: false
+  reuse_reference_cache: true
+  retry_badcase: true
+  retry_badcase_max_times: 5
+  retry_badcase_ratio_threshold: 3.0
+  max_len: 4096
+  task_attempts: 5
+  # 长句按语义标点拆分。每个短块独立生成、质检并写断点，最终再无损拼接。
+  chunk_max_chars: 48
+  chunk_min_chars: 8
+  # VoxCPM 的控制词与正文共用输入；限制长度可显著降低把导演指令念出来的概率。
+  control_max_chars: 32
+  quality_min_duration_ratio: 0.92
+  quality_max_duration_ratio: 1.9
+  inter_chunk_pause_ms: 90
+  timeout: 604800               # 最长允许连续运行 7 天
+
+# VoxCPM 表演导演：emotion 之后、TTS 之前
+# 每条 VoxCPM 台词均由两个互相盲审的导演独立分析，再由第三个 Agent 裁决。
+streaming_tts:
+  enabled: true
+  checkpoint_path: "output/streaming_tts.checkpoint.json"
+  log_path: "logs/streaming_tts.log"
+  poll_interval_seconds: 15
+  minimum_batch_size: 16
+  maximum_batch_size: 4096
+  maximum_batch_wait_seconds: 120
+
+performance:
+  output_path: "backend/data/performance_directions.json"
+  checkpoint_path: "backend/data/performance_directions.checkpoint.json"
+  profile_output_path: "backend/data/performance_profiles.json"
+  profile_checkpoint_path: "backend/data/performance_profiles.checkpoint.json"
+  # Lines belonging to speakers outside `characters` use a disjoint stream so
+  # the existing primary checkpoint remains fully reusable and auditable.
+  supplemental_output_path: "backend/data/performance_directions_supplemental.json"
+  supplemental_checkpoint_path: "backend/data/performance_directions_supplemental.checkpoint.json"
+  supplemental_profile_output_path: "backend/data/performance_profiles_supplemental.json"
+  supplemental_profile_checkpoint_path: "backend/data/performance_profiles_supplemental.checkpoint.json"
+  character_cards_path: "docs/角色卡.md"
+  context_radius: 100
+  min_control_chars: 18
+  max_control_chars: 140
+  max_agent_rounds: 8
+  item_retries: 3
+  force_profiles: false
+  force_directions: false
 
 # BGM 配置（Stage 7）
 bgm:
@@ -58,7 +114,42 @@ bgm:
   force_segmentation: false        # 重新执行场景分割
   force_label: false               # 重新标注 BGM 类型
   force_generate: false            # 重新生成 BGM 音频
-  segmentation_chunks: 6           # 多智能体分割的块数
-  clip_duration: 30                # 每个 BGM 片段的时长（秒）
-  inference_steps: 8               # ACE-Step 扩散步数（turbo=8, base=50）
+  segmentation_chunks: 24          # 更细的音乐场景，约每 12-24 个源行审视一次换乐
+  model: "acestep-v15-sft"         # 最终质量版；比 turbo 慢，但细节和 CFG 更好
+  lm_model: "acestep-5Hz-lm-1.7B"
+  lm_backend: "vllm"               # Windows 不兼容时 ACE-Step 会自动退回 PyTorch
+  cpu_offload: true                 # 12GB 显存：阶段间卸载 VAE/文本编码器，给 SFT+1.7B LM 留推理余量
+  thinking: true                    # 用 5Hz LM 生成更完整的音乐语义结构
+  guidance_scale: 7.0
+  clips_per_segment: 3
+  clip_duration: 60                 # 每场景三条 60 秒变奏，显著减少短循环重复
+  inference_steps: 50               # SFT 最终质量步数
+  clip_attempts: 3                  # 静音、截断或坏文件自动换 seed 重试
+  proxy: "http://127.0.0.1:7890"   # 首次下载 SFT 权重时使用
+  generation_timeout: 1209600       # BGM 长跑最多 14 天
   volume_db: -8.0                  # BGM 全局音量（dB，负值越小越安静）
+
+illustrations:
+  plan_path: "output/illustration_plan.json"
+  output_dir: "output/illustrations_agnes"
+  checkpoint_path: "output/illustrations_agnes_checkpoint.json"
+  prompt_audit_checkpoint_path: "backend/data/visual_prompt_audit.checkpoint.json"
+  character_cards_path: "docs/角色卡.md"
+  endpoint: "https://apihub.agnes-ai.com/v1/images/generations"
+  model: "agnes-image-2.1-flash"
+  size: "896x1152"
+  interval_min: 1.0
+  interval_max: 2.0
+  planning_timeout: 7200
+  generation_timeout: 172800
+  force_plan: false
+  force_generate: false
+  force_prompt_audit: false
+
+video:
+  output_path: "output/illustration_video_agnes_subtitled.mp4"
+  subtitle_path: "output/illustration_video_agnes_subtitles.srt"
+  ffmpeg: "D:/ffmpeg-7.1.1-full_build/bin/ffmpeg.exe"
+  ffprobe: "D:/ffmpeg-7.1.1-full_build/bin/ffprobe.exe"
+  timeout: 172800
+  force: false

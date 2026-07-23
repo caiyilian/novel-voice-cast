@@ -25,6 +25,42 @@ backend/data/output/
 # Logs
 *.log
 
+# Generated runtime state and media
+output/
+test_output/
+logs/
+recordings/
+.cache/
+.atomcode/
+.omo/
+_archive/
+backend/_archive/
+backend/data/*.checkpoint.json
+backend/data/issue99_validation/
+backend/data/voices/
+backend/data/performance_directions*.json
+backend/data/performance_profiles*.json
+backend/data/visual_prompt_audit.checkpoint.json
+
+# Local model runtimes and checkpoints
+ACE-Step-1.5/
+
+# Local experiments and scratch notes
+_tmp*.txt
+_check_timing.py
+_review_output.py
+chat.md
+config/mcporter.json
+
+# Voice experiments not used by the production five-voice mapping
+backend/data/presets/clone_*.wav
+backend/data/presets/design_female_*.wav
+backend/data/presets/design_male_serious.wav
+backend/data/presets/holo.mp3
+backend/data/presets/indextts2_*.wav
+backend/data/presets/ultimate_clone.wav
+backend/data/presets/voxcpm_local_test.wav
+
 # Local config (contains server IPs)
 ip_config
 

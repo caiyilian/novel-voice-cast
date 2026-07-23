@@ -1,316 +1,613 @@
-"""
-Emotion labeler agent for novel dialogues.
-Uses Ollama with tool calling to identify emotion and tone for each dialogue.
-Pattern adapted from opencode-novel-loop's AgentRunner.
-"""
+"""Evidence-grounded emotion and delivery-tone labeling agents."""
+
+from __future__ import annotations
+
 import json
-import re
-from typing import List, Dict, Any, Optional
+import hashlib
+import logging
+import os
+import time
+from pathlib import Path
+from typing import Any, Optional
 
-from app.core.ollama_client import OllamaClient, OllamaConfig, OllamaError, ToolCall
+from app.core.llm_client import LLMClient, LLMResult, SENSENOVA_FLASH_LITE_MODEL, ToolCall
 
-
-# ─── Emotion taxonomy ──────────────────────────────────────────────
+logger = logging.getLogger("emotion_labeler")
 
 EMOTIONS = ["happy", "sad", "angry", "surprised", "calm", "nervous", "cold"]
 TONES = ["loud", "soft", "stutter", "sarcastic", "gentle", "serious", "whisper"]
+DEFAULT_CHECKPOINT = Path("backend/data/emotion_results.checkpoint.json")
+EMOTION_PIPELINE_VERSION = 2
 
 
-# ─── Novel Index (simplified) ──────────────────────────────────────
+class EmotionBatchError(RuntimeError):
+    """A dialogue remained invalid after retries; the checkpoint is resumable."""
+
 
 class NovelIndex:
-    """Indexes novel text for search and read operations."""
-
-    def __init__(self, text: str, dialogues: List[Dict] = None):
-        self.text = text
+    def __init__(self, text: str, dialogues: Optional[list[dict]] = None):
         self.lines = text.splitlines()
-        # 构建行号到说话人的映射
-        self.line_to_speaker = {}
-        if dialogues:
-            for d in dialogues:
-                line_num = d.get("line", 0)
-                speaker = d.get("speaker", "")
-                if line_num > 0 and speaker and speaker != "旁白":
-                    self.line_to_speaker[line_num] = speaker
+        self.dialogues = dialogues or []
+        self.line_to_speakers: dict[int, list[str]] = {}
+        for dialogue in self.dialogues:
+            line = int(dialogue.get("line", 0) or 0)
+            speaker = str(dialogue.get("speaker", "")).strip()
+            if line > 0 and speaker:
+                self.line_to_speakers.setdefault(line, []).append(speaker)
 
-    def _format_line(self, line_num: int, line: str) -> str:
-        """给对话行加上说话人标记"""
-        speaker = self.line_to_speaker.get(line_num)
-        if speaker and "「" in line:
-            # 给对话行加上【说话人】标记
-            return f"{line_num}: 【{speaker}】{line.strip()}"
-        return f"{line_num}: {line.strip()}"
+    def _format_line(self, line_number: int, line: str) -> str:
+        speakers = self.line_to_speakers.get(line_number, [])
+        label = f" [speaker: {', '.join(speakers)}]" if speakers else ""
+        return f"{line_number}{label}: {line.strip()}"
 
-    def search(self, keyword: str, limit: int = 20) -> Dict[str, Any]:
-        """Search for keyword in novel text."""
-        matches = []
-        for i, line in enumerate(self.lines, start=1):
-            if keyword in line:
-                formatted = self._format_line(i, line)
-                matches.append({"line_number": i, "line": formatted[:120]})
-                if len(matches) >= limit:
-                    break
-        total = sum(1 for line in self.lines if keyword in line)
-        return {
-            "total_matches": total,
-            "truncated": total > len(matches),
-            "matches": matches,
-        }
-
-    def read_lines(self, start: int, end: int, limit: int = 300) -> Dict[str, Any]:
-        """Read line range from novel (1-based, inclusive)."""
-        start = max(1, start)
-        end = min(len(self.lines), end)
+    def read_lines(self, start: int, end: int, limit: int = 160) -> dict[str, Any]:
+        start = max(1, int(start))
+        end = min(len(self.lines), int(end))
         if start > end:
             return {"text": "", "truncated": False}
-        lines = self.lines[start - 1 : end]
-        if len(lines) > limit:
-            lines = lines[:limit]
-            truncated = True
-        else:
-            truncated = False
-        text = "\n".join(self._format_line(start + i, line) for i, line in enumerate(lines))
-        return {"text": text, "truncated": truncated}
+        selected = self.lines[start - 1 : end]
+        truncated = len(selected) > limit
+        selected = selected[:limit]
+        return {
+            "text": "\n".join(self._format_line(start + offset, line) for offset, line in enumerate(selected)),
+            "truncated": truncated,
+        }
 
-    def get_dialogue_context(self, dialogue_index: int, context_lines: int = 5) -> Dict[str, Any]:
-        """Get context around a specific dialogue line."""
-        if dialogue_index < 1 or dialogue_index > len(self.lines):
-            return {"text": "", "truncated": False}
-        start = max(1, dialogue_index - context_lines)
-        end = min(len(self.lines), dialogue_index + context_lines)
-        lines = self.lines[start - 1 : end]
-        text = "\n".join(f"{start + i}: {line.strip()}" for i, line in enumerate(lines))
-        return {"text": text, "truncated": False}
+    def search(self, keyword: str, limit: int = 20) -> dict[str, Any]:
+        matches = [
+            {"line_number": number, "line": self._format_line(number, line)[:300]}
+            for number, line in enumerate(self.lines, 1)
+            if keyword and keyword in line
+        ]
+        return {"total_matches": len(matches), "truncated": len(matches) > limit, "matches": matches[:limit]}
+
+    def context(self, dialogue_line: int, radius: int = 60) -> str:
+        text = self.read_lines(dialogue_line - radius, dialogue_line + radius, limit=radius * 2 + 1)["text"]
+        target_prefixes = (f"{dialogue_line}:", f"{dialogue_line} ")
+        return "\n".join(
+            f">>> TARGET SOURCE LINE {line}" if line.startswith(target_prefixes) else line
+            for line in text.splitlines()
+        )
 
 
-# ─── Tool definitions ──────────────────────────────────────────────
+def emotion_source_hash(text: str, dialogues: list[dict]) -> str:
+    identity = [
+        {
+            "line": int(dialogue.get("line", 0) or 0),
+            "speaker": str(dialogue.get("speaker", "")),
+            "text": str(dialogue.get("text", "")),
+        }
+        for dialogue in dialogues
+    ]
+    digest = hashlib.sha256()
+    digest.update(text.encode("utf-8"))
+    digest.update(json.dumps(identity, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _schema(properties: dict, required: list[str]) -> dict:
+    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+
 
 TOOL_SPECS = [
     {
         "type": "function",
         "function": {
             "name": "read_lines",
-            "description": "Read specific lines from the novel. 1-based inclusive.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "start_line": {"type": "integer", "description": "Start line (1-based)"},
-                    "end_line": {"type": "integer", "description": "End line (1-based, inclusive)"},
-                },
-                "required": ["start_line", "end_line"],
-            },
+            "description": "Read additional nearby source lines when the supplied context is insufficient.",
+            "strict": True,
+            "parameters": _schema(
+                {"start_line": {"type": "integer", "minimum": 1}, "end_line": {"type": "integer", "minimum": 1}},
+                ["start_line", "end_line"],
+            ),
         },
     },
     {
         "type": "function",
         "function": {
             "name": "search_novel",
-            "description": "Search the novel for a keyword. Returns matching lines with line numbers.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "keyword": {"type": "string", "description": "Keyword to search for"},
-                    "limit": {"type": "integer", "description": "Max results (default 20)"},
-                },
-                "required": ["keyword"],
-            },
+            "description": "Search exact words, names, or recurring expressions in the complete novel.",
+            "strict": True,
+            "parameters": _schema(
+                {"keyword": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 30}},
+                ["keyword", "limit"],
+            ),
         },
     },
     {
         "type": "function",
         "function": {
             "name": "submit_emotion",
-            "description": "Submit emotion and tone judgment for a dialogue.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "dialogue_index": {"type": "integer", "description": "Index of the dialogue (1-based)"},
-                    "emotion": {"type": "string", "enum": EMOTIONS, "description": "Emotion label"},
-                    "tone": {"type": "string", "enum": TONES, "description": "Tone label"},
-                    "confidence": {"type": "number", "description": "Confidence 0.0-1.0"},
-                    "evidence": {"type": "string", "description": "Evidence from the text"},
+            "description": "Submit exactly one emotion and one delivery tone for the target dialogue.",
+            "strict": True,
+            "parameters": _schema(
+                {
+                    "emotion": {"type": "string", "enum": EMOTIONS},
+                    "tone": {"type": "string", "enum": TONES},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "evidence": {"type": "string", "minLength": 1},
+                    "evidence_lines": {
+                        "type": "array",
+                        "items": {"type": "integer", "minimum": 1},
+                        "minItems": 1,
+                    },
                 },
-                "required": ["dialogue_index", "emotion", "tone", "confidence", "evidence"],
-            },
+                ["emotion", "tone", "confidence", "evidence", "evidence_lines"],
+            ),
         },
     },
 ]
 
+REVIEW_TOOL = [{
+    "type": "function",
+    "function": {
+        "name": "submit_emotion_review",
+        "description": "Submit an independent emotion/tone review.",
+        "strict": True,
+        "parameters": _schema(
+            {
+                "emotion": {"type": "string", "enum": EMOTIONS},
+                "tone": {"type": "string", "enum": TONES},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "evidence": {"type": "string", "minLength": 1},
+                "evidence_lines": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 1},
+                    "minItems": 1,
+                },
+            },
+            ["emotion", "tone", "confidence", "evidence", "evidence_lines"],
+        ),
+    },
+}]
 
-# ─── System prompt ─────────────────────────────────────────────────
+SYSTEM_PROMPT = """You label one audiobook dialogue at a time from source evidence.
 
-SYSTEM_PROMPT = """You are a novel dialogue emotion analyst. Your task is to determine the emotion and tone of each dialogue.
+Emotion is the speaker's internal state:
+- happy: joy, delight, amusement, or pleased excitement
+- sad: grief, hurt, disappointment, or despair
+- angry: anger, irritation, hostility, or indignation
+- surprised: shock, sudden disbelief, or astonishment
+- calm: emotionally stable, neutral, relaxed, or matter-of-fact
+- nervous: fear, anxiety, unease, panic, or insecure anticipation
+- cold: deliberate emotional detachment, contemptuous distance, or mercilessness
 
-## Emotion Labels
-- happy: 高兴/快乐
-- sad: 悲伤/难过
-- angry: 愤怒/生气
-- surprised: 惊讶/震惊
-- calm: 平静/冷静
-- nervous: 紧张/焦虑
-- cold: 冷漠/淡漠
+Tone is how the line is delivered:
+- loud: shouted, forceful, or explicitly raised volume
+- soft: quiet/low-volume delivery without being a whisper
+- stutter: broken, hesitant, repeated, or stammering delivery
+- sarcastic: ironic, mocking, or saying the opposite of the literal meaning
+- gentle: warm, kind, soothing, or tender delivery
+- serious: solemn, firm, direct, or businesslike delivery
+- whisper: explicitly whispered or intentionally hushed speech
 
-## Tone Labels
-- loud: 大声/喊叫
-- soft: 小声/轻声
-- stutter: 结巴/犹豫
-- sarcastic: 讽刺/嘲讽
-- gentle: 温柔/轻柔
-- serious: 严肃/认真
-- whisper: 低语/耳语
-
-## Analysis Rules
-
-1. **First read context**: Call `read_lines` to read 30+ lines around the dialogue
-2. **Search if needed**: Call `search_novel` to find related descriptions or character emotions
-3. **Analyze multiple factors**:
-   - Dialogue text content (words, punctuation, exclamations)
-   - Context from surrounding lines (what happened before/after)
-   - Narrator descriptions (e.g., "冷冷地说", "微笑着说", "颤抖着说")
-   - Character's emotional state from previous dialogues
-   - Punctuation (!, ..., ?, ！！！)
-4. **Consider character relationships**: How characters feel about each other affects emotion
-5. **Default when uncertain**: Use "calm" emotion + "serious" tone with confidence < 0.5
-
-## Evidence Requirements
-
-Always provide specific evidence from the text:
-- Quote the narrator description that indicates emotion
-- Note any punctuation that suggests tone
-- Reference context from surrounding lines
-
-## Output
-
-Call `submit_emotion` with:
-- dialogue_index: the line number of the dialogue
-- emotion: one of the emotion labels above
-- tone: one of the tone labels above
-- confidence: 0.0 to 1.0 (higher = more certain)
-- evidence: specific lines or descriptions that support your judgment
+Politeness or curiosity alone is not gentle. Use gentle only with concrete warmth,
+care, reassurance, or tenderness. Use serious for an otherwise unmarked direct or
+businesslike line. Use soft only when low volume or subdued delivery is supported.
+Do not equate punctuation with emotion. Infer who speaks, what happened immediately
+before, the addressee, subtext, and narration describing delivery. Choose exactly one
+label from each taxonomy. The source line number is the only location identifier: never
+reinterpret it as an array index or look up a different line. Cite concrete cues and put
+every cited source line in evidence_lines; evidence_lines must include the target source
+line. Use calm/serious only when genuinely supported, not as a parsing fallback. Finish
+with one required submission tool call for the target dialogue shown verbatim.
 """
 
 
-# ─── Tool execution ────────────────────────────────────────────────
-
-def _execute_tool(tool: ToolCall, index: NovelIndex) -> str:
-    """Execute a tool call and return the result."""
-    if tool.name == "read_lines":
-        start = tool.arguments.get("start_line", 1)
-        end = tool.arguments.get("end_line", start + 100)
-        result = index.read_lines(start, end)
-        output = result["text"]
-        if result["truncated"]:
-            output += "\n... (truncated)"
-        return output if output else "No lines in range"
-
-    elif tool.name == "search_novel":
-        keyword = tool.arguments.get("keyword", "")
-        limit = tool.arguments.get("limit", 20)
-        result = index.search(keyword, limit)
-        lines = [f"Line {m['line_number']}: {m['line']}" for m in result["matches"]]
-        output = f"Found {result['total_matches']} matches"
-        if result["truncated"]:
-            output += f" (showing {len(result['matches'])} of {result['total_matches']})"
-        output += ":\n" + "\n".join(lines) if lines else "\nNo matches found"
-        return output
-
-    return f"Unknown tool: {tool.name}"
+def _assistant_message(result: LLMResult) -> dict[str, Any]:
+    return {
+        "role": "assistant",
+        "content": result.content or "",
+        "tool_calls": [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {"name": call.name, "arguments": json.dumps(call.arguments, ensure_ascii=False)},
+            }
+            for call in result.tool_calls
+        ],
+    }
 
 
-# ─── Main agent loop ───────────────────────────────────────────────
+def _validate(
+    raw: dict[str, Any],
+    dialogue_index: int,
+    dialogue_line: int,
+    index: NovelIndex,
+) -> tuple[Optional[dict[str, Any]], str]:
+    if raw.get("emotion") not in EMOTIONS:
+        return None, f"emotion must be one of {EMOTIONS}"
+    if raw.get("tone") not in TONES:
+        return None, f"tone must be one of {TONES}"
+    try:
+        confidence = float(raw.get("confidence"))
+    except (TypeError, ValueError):
+        return None, "confidence must be numeric"
+    if not 0 <= confidence <= 1:
+        return None, "confidence must be between 0 and 1"
+    evidence = str(raw.get("evidence", "")).strip()
+    if len(evidence) < 4:
+        return None, "evidence is empty or too short"
+    raw_lines = raw.get("evidence_lines")
+    if not isinstance(raw_lines, list) or not raw_lines:
+        return None, "evidence_lines must be a non-empty list"
+    try:
+        evidence_lines = sorted({int(line) for line in raw_lines})
+    except (TypeError, ValueError):
+        return None, "evidence_lines must contain integers"
+    if dialogue_line not in evidence_lines:
+        return None, f"evidence_lines must include target source line {dialogue_line}"
+    if any(line < 1 or line > len(index.lines) for line in evidence_lines):
+        return None, f"evidence_lines must stay within source lines 1..{len(index.lines)}"
+    return {
+        "dialogue_index": dialogue_index,
+        "source_line": dialogue_line,
+        "emotion": raw["emotion"],
+        "tone": raw["tone"],
+        "confidence": confidence,
+        "evidence": evidence,
+        "evidence_lines": evidence_lines,
+    }, ""
+
+
+def _execute(call: ToolCall, index: NovelIndex) -> str:
+    if call.name == "read_lines":
+        payload = index.read_lines(int(call.arguments.get("start_line", 1)), int(call.arguments.get("end_line", 1)))
+        return json.dumps(payload, ensure_ascii=False)
+    if call.name == "search_novel":
+        payload = index.search(str(call.arguments.get("keyword", "")), int(call.arguments.get("limit", 20)))
+        return json.dumps(payload, ensure_ascii=False)
+    return "Final submission tool; it must pass validation."
+
+
+def _run_primary(
+    dialogue_text: str,
+    dialogue_line: int,
+    dialogue_index: int,
+    speaker: str,
+    index: NovelIndex,
+    client: LLMClient,
+    max_tool_steps: int,
+    memory: str,
+) -> dict[str, Any]:
+    del memory  # Nearby source context is the continuity source; prior labels can anchor the model.
+    trace_id = f"emotion:{dialogue_index}:line:{dialogue_line}"
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"Target source line: {dialogue_line}\n"
+                f"Target speaker: {speaker or 'unknown'}\n"
+                f"Target dialogue verbatim:\n<<<{dialogue_text}>>>\n\n"
+                f"Nearby source context (the target is explicitly marked):\n{index.context(dialogue_line)}"
+            ),
+        },
+    ]
+    last_error = "No valid submission"
+    for step in range(1, max_tool_steps + 1):
+        result = client.chat(
+            messages,
+            tools=TOOL_SPECS,
+            temperature=0.1,
+            max_tokens=5000,
+            agent_role="emotion_primary",
+            trace_id=trace_id,
+            agent_round=step,
+        )
+        if not result.tool_calls:
+            messages.extend([
+                {"role": "assistant", "content": result.content or ""},
+                {"role": "user", "content": "Finish with a submit_emotion tool call."},
+            ])
+            continue
+        messages.append(_assistant_message(result))
+        for call in result.tool_calls:
+            if call.name == "submit_emotion":
+                validated, last_error = _validate(call.arguments, dialogue_index, dialogue_line, index)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": "Accepted" if validated else f"Rejected: {last_error}. Correct and resubmit.",
+                })
+                if validated:
+                    return validated
+            else:
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": _execute(call, index)})
+    raise ValueError(last_error)
+
+
+def _run_review(
+    candidate: Optional[dict[str, Any]],
+    dialogue_text: str,
+    dialogue_line: int,
+    dialogue_index: int,
+    speaker: str,
+    index: NovelIndex,
+    client: LLMClient,
+    review_role: str = "independent verifier",
+) -> dict[str, Any]:
+    is_adjudicator = candidate is not None
+    role_instruction = (
+        "You are the final adjudicator. Compare both candidate decisions with the source, "
+        "resolve the disagreement, and freely choose a third pair if both are wrong."
+        if is_adjudicator
+        else "You are an independent verifier. Make a fresh decision from the source only; "
+        "the primary decision is intentionally hidden to prevent anchoring."
+    )
+    candidate_text = ""
+    if candidate:
+        decision_fields = ("emotion", "tone", "confidence", "evidence", "evidence_lines", "source_line")
+        sanitized = {
+            name: {field: decision.get(field) for field in decision_fields if field in decision}
+            for name, decision in candidate.items()
+        }
+        candidate_text = f"\n\nCandidate decisions (source line is authoritative):\n{json.dumps(sanitized, ensure_ascii=False)}"
+    trace_id = f"emotion:{dialogue_index}:line:{dialogue_line}"
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                SYSTEM_PROMPT
+                + "\n"
+                + role_instruction
+                + " Challenge generic defaults, unsupported intensity, and labels based only on punctuation. "
+                  "Submit exactly one submit_emotion_review tool call."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Target source line: {dialogue_line}\n"
+                f"Target speaker: {speaker or 'unknown'}\n"
+                f"Target dialogue verbatim:\n<<<{dialogue_text}>>>"
+                f"{candidate_text}\n\n"
+                f"Nearby source context (the target is explicitly marked):\n{index.context(dialogue_line)}"
+            ),
+        },
+    ]
+    last_error = "No valid review"
+    for step in range(1, 4):
+        result = client.chat(
+            messages,
+            tools=REVIEW_TOOL,
+            tool_choice={"type": "function", "function": {"name": "submit_emotion_review"}},
+            temperature=0.0,
+            max_tokens=5000,
+            agent_role="emotion_" + review_role.replace(" ", "_"),
+            trace_id=trace_id,
+            agent_round=step,
+        )
+        validated = None
+        for call in result.tool_calls:
+            if call.name == "submit_emotion_review":
+                validated, last_error = _validate(call.arguments, dialogue_index, dialogue_line, index)
+        if validated:
+            return validated
+        if result.tool_calls:
+            messages.append(_assistant_message(result))
+            for call in result.tool_calls:
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": f"Rejected: {last_error}"})
+        else:
+            messages.append({"role": "assistant", "content": result.content or ""})
+        messages.append({"role": "user", "content": f"Invalid review: {last_error}. Submit a corrected review."})
+    raise ValueError(last_error)
+
 
 def label_emotion(
     dialogue_text: str,
     dialogue_line: int,
     dialogue_index: int,
     text: str,
-    client: OllamaClient,
-    max_tool_steps: int = 10,
+    client: Optional[LLMClient] = None,
+    max_tool_steps: int = 6,
     speaker: str = "",
-    dialogues: List[Dict] = None,
-) -> Dict[str, Any]:
-    """Identify emotion for a single dialogue.
+    dialogues: Optional[list[dict]] = None,
+    memory: str = "",
+    verification_threshold: float = 0.68,
+    always_verify: bool = True,
+    _index: Optional[NovelIndex] = None,
+) -> dict[str, Any]:
+    """Label exactly one dialogue; uncertain labels receive a second API call."""
+    client = client or LLMClient.for_flash_lite("emotion")
+    index = _index or NovelIndex(text, dialogues)
+    calls_before = client.usage_summary()["calls"]
+    primary = _run_primary(
+        dialogue_text, dialogue_line, dialogue_index, speaker, index, client, max_tool_steps, memory
+    )
+    final = primary
+    reviewed = False
+    if always_verify or primary["confidence"] < verification_threshold:
+        reviewed = True
+        review = _run_review(None, dialogue_text, dialogue_line, dialogue_index, speaker, index, client)
+        if (review["emotion"], review["tone"]) == (primary["emotion"], primary["tone"]):
+            final = dict(primary)
+            final["confidence"] = round((primary["confidence"] + review["confidence"]) / 2, 4)
+            final["evidence"] = f"Primary: {primary['evidence']} | Review: {review['evidence']}"
+            final["evidence_lines"] = sorted(set(primary["evidence_lines"] + review["evidence_lines"]))
+            final["decision_path"] = "independent_agreement"
+            final["adjudicated"] = False
+        else:
+            dispute = {"primary": primary, "independent_review": review}
+            final = _run_review(
+                dispute,
+                dialogue_text,
+                dialogue_line,
+                dialogue_index,
+                speaker,
+                index,
+                client,
+                review_role="final adjudicator resolving a disagreement between two agents",
+            )
+            final["adjudicated"] = True
+            final["decision_path"] = "adjudicated_disagreement"
+    final["primary_decision"] = primary
+    if reviewed:
+        final["review_decision"] = review
+    final["reviewed"] = reviewed
+    final["agent_calls"] = client.usage_summary()["calls"] - calls_before
+    return final
 
-    Args:
-        dialogue_text: The dialogue text
-        dialogue_line: Line number of the dialogue (1-based)
-        dialogue_index: Index in the dialogues list (0-based)
-        text: Full novel text
-        client: Ollama client
-        max_tool_steps: Maximum tool-calling iterations
-        speaker: Speaker name (optional)
-        dialogues: List of all dialogues with speaker info (optional)
 
-    Returns:
-        {"dialogue_index": int, "emotion": str, "tone": str, "confidence": float, "evidence": str}
-    """
+def label_all_emotions(
+    dialogues: list[dict],
+    text: str,
+    client: Optional[LLMClient] = None,
+    checkpoint_path: Path | str | None = DEFAULT_CHECKPOINT,
+    resume: bool = True,
+    max_tool_steps: int = 6,
+    item_retries: int = 3,
+    max_items: Optional[int] = None,
+) -> dict[str, dict[str, Any]]:
+    """Label a volume one dialogue at a time with an atomic resumable checkpoint."""
+    client = client or LLMClient.for_flash_lite("emotion")
+    usage_at_start = _normalise_usage_summary(client.usage_summary())
     index = NovelIndex(text, dialogues)
+    source_hash = emotion_source_hash(text, dialogues)
+    model_name = getattr(client, "sensenova_model", SENSENOVA_FLASH_LITE_MODEL)
+    checkpoint = Path(checkpoint_path) if checkpoint_path else None
+    results: dict[str, dict[str, Any]] = {}
+    errors: dict[str, str] = {}
+    previous_usage = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    if resume and checkpoint and checkpoint.exists():
+        try:
+            payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+            compatible = (
+                payload.get("pipeline_version") == EMOTION_PIPELINE_VERSION
+                and payload.get("source_hash") == source_hash
+                and payload.get("model") == model_name
+            )
+            if compatible:
+                raw_results = payload.get("results", {})
+                if isinstance(raw_results, dict):
+                    for key, value in raw_results.items():
+                        try:
+                            dialogue_index = int(key)
+                            dialogue = dialogues[dialogue_index]
+                        except (TypeError, ValueError, IndexError):
+                            continue
+                        speaker = str(dialogue.get("speaker", "")).strip()
+                        if not speaker or speaker in {"旁白", "narrator", "Narrator"}:
+                            continue
+                        validated, _ = _validate(
+                            value,
+                            dialogue_index,
+                            int(dialogue.get("line", 0) or 0),
+                            index,
+                        )
+                        if validated:
+                            results[str(dialogue_index)] = dict(value, **validated)
+                errors = dict(payload.get("errors", {}))
+                previous_usage = _normalise_usage_summary(payload.get("llm_usage", {}))
+            else:
+                logger.warning(
+                    "Ignoring incompatible emotion checkpoint %s (version/source/model changed)",
+                    checkpoint,
+                )
+        except (OSError, json.JSONDecodeError, TypeError):
+            logger.warning("Ignoring invalid emotion checkpoint: %s", checkpoint)
 
-    # 只提供对话本身，让 LLM 自己探索上下文
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"""Analyze the emotion and tone of this dialogue:
+    newly_processed = 0
+    for dialogue_index, dialogue in enumerate(dialogues):
+        key = str(dialogue_index)
+        speaker = str(dialogue.get("speaker", "")).strip()
+        if not speaker or speaker in {"\u65c1\u767d", "narrator", "Narrator"}:
+            continue
+        if key in results:
+            continue
+        last_error: Optional[Exception] = None
+        item_calls_before = client.usage_summary()["calls"]
+        for attempt in range(1, item_retries + 1):
+            try:
+                value = label_emotion(
+                    dialogue_text=str(dialogue.get("text", "")),
+                    dialogue_line=int(dialogue.get("line", 0) or 0),
+                    dialogue_index=dialogue_index,
+                    text=text,
+                    client=client,
+                    max_tool_steps=max_tool_steps,
+                    speaker=speaker,
+                    dialogues=dialogues,
+                    _index=index,
+                )
+                value["agent_calls"] = client.usage_summary()["calls"] - item_calls_before
+                value["item_attempts"] = attempt
+                results[key] = value
+                errors.pop(key, None)
+                break
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Emotion index %s attempt %d/%d failed: %s", key, attempt, item_retries, exc)
+        if key not in results:
+            errors[key] = str(last_error)
+        if checkpoint:
+            _write_checkpoint(
+                checkpoint,
+                results,
+                errors,
+                client,
+                source_hash=source_hash,
+                model_name=model_name,
+                previous_usage=previous_usage,
+                usage_at_start=usage_at_start,
+            )
+        if key not in results:
+            raise EmotionBatchError(
+                f"Dialogue {key} failed after {item_retries} attempts; rerun to resume from {checkpoint}: {last_error}"
+            )
+        logger.info("Emotion progress index=%s label=%s/%s", key, results[key]["emotion"], results[key]["tone"])
+        newly_processed += 1
+        if max_items is not None and newly_processed >= max_items:
+            break
+    return results
 
-Dialogue (line {dialogue_line}): 【{speaker}】「{dialogue_text}」
 
-Use read_lines to read the context around this dialogue, and search_novel to find related descriptions or character emotions. Then call submit_emotion."""},
-    ]
-
-    for step in range(1, max_tool_steps + 1):
-        result = client.chat(messages, tools=TOOL_SPECS)
-
-        if result.tool_calls:
-            for tc in result.tool_calls:
-                tool_result = _execute_tool(tc, index)
-                messages.append({
-                    "role": "assistant",
-                    "content": result.content or "",
-                    "tool_calls": [{
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments, ensure_ascii=False),
-                        },
-                    }],
-                })
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": tool_result,
-                })
-
-                # check if submit_emotion was called
-                if tc.name == "submit_emotion":
-                    return {
-                        "dialogue_index": dialogue_index,
-                        "emotion": tc.arguments.get("emotion", "calm"),
-                        "tone": tc.arguments.get("tone", "serious"),
-                        "confidence": tc.arguments.get("confidence", 0.0),
-                        "evidence": tc.arguments.get("evidence", ""),
-                    }
-
-        elif result.content:
-            # try to parse JSON fallback
-            match = re.search(r'\{.*?\}', result.content, re.DOTALL)
-            if match:
-                try:
-                    data = json.loads(match.group(0))
-                    if "emotion" in data and "tone" in data:
-                        return {
-                            "dialogue_index": dialogue_index,
-                            "emotion": data.get("emotion", "calm"),
-                            "tone": data.get("tone", "serious"),
-                            "confidence": data.get("confidence", 0.0),
-                            "evidence": data.get("evidence", ""),
-                        }
-                except json.JSONDecodeError:
-                    pass
-
-    return {
-        "dialogue_index": dialogue_index,
-        "emotion": "calm",
-        "tone": "serious",
-        "confidence": 0.0,
-        "evidence": "Failed to determine within max_tool_steps",
+def _write_checkpoint(
+    path: Path,
+    results: dict[str, dict[str, Any]],
+    errors: dict[str, str],
+    client: LLMClient,
+    *,
+    source_hash: str,
+    model_name: str,
+    previous_usage: dict[str, int],
+    usage_at_start: dict[str, int],
+) -> None:
+    current_usage = _normalise_usage_summary(client.usage_summary())
+    usage_delta = {
+        key: max(0, current_usage[key] - usage_at_start[key])
+        for key in current_usage
     }
+    payload = {
+        "pipeline_version": EMOTION_PIPELINE_VERSION,
+        "source_hash": source_hash,
+        "model": model_name,
+        "taxonomy": {"emotions": EMOTIONS, "tones": TONES},
+        "results": results,
+        "errors": errors,
+        "llm_usage": _merge_usage_summaries(previous_usage, usage_delta),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    for attempt in range(6):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            if attempt == 5:
+                raise
+            time.sleep(0.1 * (2**attempt))
+
+
+def _normalise_usage_summary(raw: dict[str, Any]) -> dict[str, int]:
+    return {
+        key: int(raw.get(key, 0) or 0)
+        for key in ("calls", "prompt_tokens", "completion_tokens", "total_tokens")
+    }
+
+
+def _merge_usage_summaries(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, int]:
+    previous = _normalise_usage_summary(previous)
+    current = _normalise_usage_summary(current)
+    return {key: previous[key] + current[key] for key in previous}
