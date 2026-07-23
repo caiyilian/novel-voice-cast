@@ -11,8 +11,8 @@ from pathlib import Path
 
 import yaml
 
-# 添加 backend 到 Python 路径
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "backend"))
 
 
 def format_time(seconds: float) -> str:
@@ -67,34 +67,22 @@ def step_gender(config: dict, characters: list, dialogues: list, novel_text: str
         print("  跳过（已禁用）")
         return {}
 
-    from app.core.gender_identifier import identify_gender
-    from app.core.ollama_client import OllamaClient
+    from app.core.gender_identifier import identify_all_genders
+    from app.core.llm_client import LLMClient
 
     t0 = time.time()
-    client = OllamaClient()
-    results = {}
-
-    for i, char_name in enumerate(characters):
-        # 构建角色上下文
-        text_parts = []
-        for d in dialogues:
-            if d.get("speaker") == char_name:
-                text_parts.append(d["text"])
-        char_text = "\n".join(text_parts[:50])
-
-        try:
-            result = identify_gender(char_name, char_text, client, max_tool_steps=5)
-            results[char_name] = {
-                "gender": result["gender"],
-                "confidence": result["confidence"],
-            }
-            status = "✓" if result["confidence"] > 0.5 else "?"
-            print(f"\r  [{i+1:2d}/{len(characters)}] {char_name}: {result['gender']} ({result['confidence']:.2f}) {status}   ", end="", flush=True)
-        except Exception as e:
-            results[char_name] = {"gender": "male", "confidence": 0.3}
-            print(f"\r  [{i+1:2d}/{len(characters)}] {char_name}: error - {e}   ", end="", flush=True)
-
-    print()
+    client = LLMClient.for_flash_lite("gender")
+    character_names = [name for name in characters if name != "旁白"]
+    identified = identify_all_genders(
+        character_names,
+        novel_text,
+        client=client,
+        dialogues=dialogues,
+        checkpoint_path="backend/data/gender_results.checkpoint.json",
+    )
+    results = {item["character_name"]: item for item in identified}
+    if "旁白" in characters:
+        results["旁白"] = {"gender": "unknown", "confidence": 1.0}
     elapsed = time.time() - t0
 
     # 保存结果

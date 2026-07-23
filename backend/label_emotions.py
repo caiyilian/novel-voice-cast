@@ -3,6 +3,7 @@
 使用预计算的性别结果，跳过 LLM 识别
 """
 import json
+import logging
 import os
 import sys
 import time
@@ -11,14 +12,31 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(__file__))
 
 from app.core.parser import parse
-from app.core.emotion_labeler import label_emotion, EMOTIONS, TONES
-from app.core.ollama_client import OllamaClient
+from app.core.emotion_labeler import (
+    EMOTION_PIPELINE_VERSION,
+    EMOTIONS,
+    TONES,
+    emotion_source_hash,
+    label_all_emotions,
+)
+from app.core.llm_client import LLMClient, SENSENOVA_FLASH_LITE_MODEL
 
 # ========== 配置 ==========
 BASE_DIR = Path(__file__).parent.parent
 NOVEL_PATH = BASE_DIR / "novels" / "novel.txt"
 LABELS_PATH = BASE_DIR / "novels" / "labels.txt"
 OUTPUT_PATH = BASE_DIR / "backend" / "data" / "emotion_results.json"
+
+
+def configure_logging() -> None:
+    log_path = BASE_DIR / "logs" / "label_emotions.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        handlers=[logging.StreamHandler(), logging.FileHandler(log_path, encoding="utf-8")],
+        force=True,
+    )
 
 
 def format_time(seconds: float) -> str:
@@ -31,6 +49,7 @@ def format_time(seconds: float) -> str:
 
 
 def main():
+    configure_logging()
     total_start = time.time()
 
     print("=" * 60)
@@ -56,63 +75,42 @@ def main():
 
     # 3. 标注情感
     t0 = time.time()
-    client = OllamaClient()
-    total_dialogues = len(dialogues)
+    client = LLMClient.for_flash_lite("emotion")
+    total_dialogues = sum(
+        1 for dialogue in dialogues
+        if dialogue.get("speaker") and dialogue.get("speaker") != "旁白"
+    )
     success_count = 0
     fail_count = 0
-    results = []
 
     print(f"\n[3/3] 开始标注 {total_dialogues} 条对话的情感...")
 
-    for i, dialogue in enumerate(dialogues):
-        speaker = dialogue.get("speaker", "")
-        text = dialogue["text"]
-        line_num = dialogue.get("line", i + 1)
-
-        try:
-            result = label_emotion(
-                dialogue_text=text,
-                dialogue_line=line_num,
-                dialogue_index=i,
-                text=novel_text,
-                client=client,
-                max_tool_steps=5,
-                speaker=speaker,
-                dialogues=dialogues,
-            )
-            result["speaker"] = speaker
-            result["text"] = text
-            results.append(result)
-            success_count += 1
-
-        except Exception as e:
-            fail_count += 1
-            results.append({
-                "dialogue_index": i,
-                "speaker": speaker,
-                "text": text,
-                "emotion": "calm",
-                "tone": "serious",
-                "confidence": 0.0,
-                "evidence": f"Error: {str(e)}",
-            })
-
-        # 进度显示 - 每条更新
-        elapsed = time.time() - t0
-        avg = elapsed / (i + 1)
-        remaining = avg * (total_dialogues - i - 1)
-        emotion = results[-1].get("emotion", "?")
-        tone = results[-1].get("tone", "?")
-        print(f"\r  [{i+1:4d}/{total_dialogues}] "
-              f"成功 {success_count:4d} 失败 {fail_count:2d} | "
-              f"{speaker[:6]:6s} {emotion:10s} {tone:10s} | "
-              f"已用 {format_time(elapsed)} 剩余 ~{format_time(remaining)}   ", end="", flush=True)
-
-    print()  # 换行
+    checkpoint_path = BASE_DIR / "backend" / "data" / "emotion_results.checkpoint.json"
+    result_map = label_all_emotions(
+        dialogues,
+        novel_text,
+        client=client,
+        checkpoint_path=checkpoint_path,
+        resume=True,
+    )
+    results = [result_map[key] for key in sorted(result_map, key=int)]
+    success_count = len(results)
     elapsed_total = time.time() - t0
     print(f"\n[标注] 完成: {format_time(elapsed_total)}")
     print(f"  成功: {success_count} 条")
     print(f"  失败: {fail_count} 条")
+
+    adjudicated = sum(bool(item.get("adjudicated")) for item in results)
+    low_confidence = sum(float(item.get("confidence", 0)) < 0.7 for item in results)
+    retried = sum(int(item.get("item_attempts", 1)) > 1 for item in results)
+    print("\n[质量审计]")
+    print(f"  双 Agent 审核: {sum(bool(item.get('reviewed')) for item in results)}/{success_count}")
+    print(f"  分歧裁决: {adjudicated} 条")
+    print(f"  低置信度(<0.7): {low_confidence} 条")
+    print(f"  条目级重试: {retried} 条")
+
+    checkpoint_payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    cumulative_usage = checkpoint_payload.get("llm_usage", client.usage_summary())
 
     # 4. 保存结果
     output_data = {
@@ -121,7 +119,13 @@ def main():
         "fail": fail_count,
         "emotions": EMOTIONS,
         "tones": TONES,
-        "results": results,
+        "meta": {
+            "model": SENSENOVA_FLASH_LITE_MODEL,
+            "pipeline_version": EMOTION_PIPELINE_VERSION,
+            "source_hash": emotion_source_hash(novel_text, dialogues),
+        },
+        "results": result_map,
+        "llm_usage": cumulative_usage,
     }
 
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)

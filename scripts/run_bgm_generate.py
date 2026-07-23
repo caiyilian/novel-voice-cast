@@ -1,4 +1,4 @@
-"""
+r"""
 Stage 7-c: BGM generation per segment via ACE-Step SDK.
 
 ⚠️  Run with ACE-Step venv's Python:
@@ -14,43 +14,81 @@ import json
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # ── Path setup: add ACE-Step project to sys.path ──────────────────────
 ACE_DIR = Path(__file__).resolve().parent.parent / "ACE-Step-1.5"
 PROJECT_ROOT = ACE_DIR.parent  # One level up: the novel-voice-cast root
-os.chdir(str(ACE_DIR))
 sys.path.insert(0, str(ACE_DIR))
 
 # ACE-Step SDK imports are lazy (inside _init_ace_step) so that dry-run
 # mode does not trigger CUDA initialisation.
-os.environ.setdefault("ACESTEP_CONFIG_PATH", "acestep-v15-turbo")
+os.environ.setdefault("ACESTEP_CONFIG_PATH", "acestep-v15-sft")
 os.environ.setdefault("ACESTEP_LM_MODEL_PATH", "acestep-5Hz-lm-1.7B")
 os.environ.setdefault("ACESTEP_DEVICE", "auto")
-os.environ.setdefault("ACESTEP_INIT_LLM", "false")  # DiT only (no LM), saves VRAM
+os.environ.setdefault("ACESTEP_INIT_LLM", "true")
+os.environ.setdefault("ACESTEP_CPU_OFFLOAD", "true")
 
 
-def _init_ace_step() -> tuple:
-    """Lazy import & init of ACE-Step SDK.  Returns (AceStepHandler, GenerationParams, GenerationConfig, generate_music)."""
+def _init_ace_step(
+    model: str | None = None,
+    lm_model: str | None = None,
+    lm_backend: str | None = None,
+) -> tuple[Any, Any]:
+    """Initialize the quality DiT and 5Hz semantic LM with explicit checks."""
     from acestep.handler import AceStepHandler
-    from acestep.inference import GenerationParams, GenerationConfig, generate_music
+    from acestep.llm_inference import LLMHandler
 
+    model = model or os.environ.get("ACESTEP_CONFIG_PATH", ACE_STEP_MODEL)
+    lm_model = lm_model or os.environ.get("ACESTEP_LM_MODEL_PATH", ACE_STEP_LM_MODEL)
+    lm_backend = lm_backend or os.environ.get("ACESTEP_LM_BACKEND", "vllm")
+    cpu_offload = os.environ.get("ACESTEP_CPU_OFFLOAD", "true").lower() not in {
+        "0",
+        "false",
+        "no",
+    }
     dit_handler = AceStepHandler()
-    dit_handler.initialize_service(
+    status, success = dit_handler.initialize_service(
         project_root=str(ACE_DIR),
-        config_path="acestep-v15-turbo",
-        device="cuda",
+        config_path=model,
+        device="auto",
+        # Keep the large DiT resident, but move the VAE/text encoder back to
+        # CPU between phases.  On a 12 GB RTX 3060 this leaves enough
+        # activation headroom for the 1.7B semantic LM + SFT DiT combination.
+        offload_to_cpu=cpu_offload,
+        offload_dit_to_cpu=False,
     )
-    return dit_handler, GenerationParams, GenerationConfig, generate_music
+    if not success:
+        raise RuntimeError(f"ACE-Step DiT initialization failed: {status}")
+
+    if os.environ.get("ACESTEP_INIT_LLM", "true").lower() in {"0", "false", "no"}:
+        return dit_handler, None
+    llm_handler = LLMHandler()
+    status, success = llm_handler.initialize(
+        checkpoint_dir=str(ACE_DIR / "checkpoints"),
+        lm_model_path=lm_model,
+        backend=lm_backend,
+        device="auto",
+        offload_to_cpu=False,
+        dtype=None,
+    )
+    if not success:
+        raise RuntimeError(f"ACE-Step 5Hz LM initialization failed: {status}")
+    return dit_handler, llm_handler
 
 # ── Project paths (relative to project root, one level up from ACE_DIR) ──
 PROJECT_ROOT = ACE_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.app.core.bgm_generator import (
+    ACE_STEP_MODEL,
+    ACE_STEP_LM_MODEL,
+    BGM_GENERATION_VERSION,
+    build_bgm_seed,
     build_manifest,
-    get_bgm_prompt,
+    build_segment_bgm_prompt,
     load_segments,
     save_manifest,
 )
@@ -58,20 +96,47 @@ from backend.app.core.bgm_generator import (
 # Resolve defaults relative to project root (os.chdir has moved us to ACE_DIR)
 _DEFAULT_SEGMENTS = str(PROJECT_ROOT / "backend/data/bgm_segments.json")
 _DEFAULT_OUTPUT_DIR = str(PROJECT_ROOT / "output/bgm")
-_MANIFEST_PATH = PROJECT_ROOT / "output/bgm/bgm_manifest.json"
 
 # ── Defaults ──
-DEFAULT_DURATION = 30       # seconds per BGM clip
-DEFAULT_INFERENCE_STEPS = 8  # turbo model steps
+DEFAULT_DURATION = 60       # seconds per BGM clip
+DEFAULT_INFERENCE_STEPS = 50  # SFT quality model steps
+
+
+def validate_generated_clip(path: Path, expected_duration: float) -> tuple[bool, str]:
+    """Reject truncated, silent, or malformed clips before checkpointing them."""
+    try:
+        import numpy as np
+        import soundfile as sf
+
+        info = sf.info(str(path))
+        duration = info.frames / info.samplerate
+        if info.frames <= 0 or info.samplerate <= 0 or info.channels <= 0:
+            return False, "invalid audio stream metadata"
+        if abs(duration - expected_duration) > max(2.0, expected_duration * 0.04):
+            return False, f"duration mismatch: {duration:.2f}s vs {expected_duration:.2f}s"
+        audio, _ = sf.read(str(path), dtype="float32", always_2d=True)
+        rms = float(np.sqrt(np.mean(np.square(audio), dtype=np.float64)))
+        peak = float(np.max(np.abs(audio)))
+        if not np.isfinite(rms) or not np.isfinite(peak):
+            return False, "audio contains non-finite samples"
+        if rms < 0.001 or peak < 0.01:
+            return False, f"audio is effectively silent (rms={rms:.6f}, peak={peak:.6f})"
+        return True, f"duration={duration:.2f}s rms={rms:.5f} peak={peak:.5f}"
+    except Exception as exc:
+        return False, f"audio validation failed: {exc}"
 
 
 def generate_clip(
     dit_handler: Any,
+    llm_handler: Any,
     caption: str,
     output_path: Path,
     duration: float = DEFAULT_DURATION,
     inference_steps: int = DEFAULT_INFERENCE_STEPS,
     seed: int = -1,
+    bpm: int | None = None,
+    guidance_scale: float = 7.0,
+    thinking: bool = True,
 ) -> bool:
     """Generate a single BGM clip and save to output_path.
 
@@ -91,19 +156,39 @@ def generate_clip(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     params = GenerationParams(
-        caption=caption,
+        task_type="text2music",
+        caption=caption[:500],
+        lyrics="[Instrumental]",
         duration=duration,
         inference_steps=inference_steps,
         instrumental=True,
+        bpm=bpm,
+        thinking=thinking,
+        guidance_scale=guidance_scale,
+        sampler_mode="heun",
+        lm_temperature=0.7,
+        lm_cfg_scale=2.0,
+        use_cot_caption=True,
+        use_cot_lyrics=False,
+        enable_normalization=True,
+        normalization_db=-3.0,
+        fade_in_duration=1.0,
+        fade_out_duration=1.5,
         seed=seed,
     )
     config = GenerationConfig(
         batch_size=1,
         audio_format="mp3",
-        mp3_bitrate="192k",
-        mp3_sample_rate=44100,
+        mp3_bitrate="256k",
+        mp3_sample_rate=48000,
     )
-    result = generate_music(dit_handler, None, params, config, save_dir=str(output_path.parent))
+    result = generate_music(
+        dit_handler,
+        llm_handler if thinking else None,
+        params,
+        config,
+        save_dir=str(output_path.parent),
+    )
 
     if not result.success:
         print(f"    [FAIL] 生成失败: {result.error}")
@@ -116,8 +201,23 @@ def generate_clip(
         if src != output_path:
             # Handle rename across devices / directories
             if src.exists():
-                src.replace(output_path)
-        return True
+                temporary = output_path.with_name(f".{output_path.name}.{uuid.uuid4().hex}.tmp.mp3")
+                src.replace(temporary)
+                valid, detail = validate_generated_clip(temporary, duration)
+                if not valid:
+                    temporary.unlink(missing_ok=True)
+                    print(f"    [REJECT] {detail}")
+                    return False
+                os.replace(temporary, output_path)
+                print(f"    [QC] {detail}")
+        else:
+            valid, detail = validate_generated_clip(output_path, duration)
+            if not valid:
+                output_path.unlink(missing_ok=True)
+                print(f"    [REJECT] {detail}")
+                return False
+            print(f"    [QC] {detail}")
+        return output_path.is_file() and output_path.stat().st_size > 0
 
     print(f"    [WARN] 未找到输出音频文件")
     return False
@@ -129,14 +229,34 @@ def main() -> int:
     parser.add_argument("--output-dir", default=_DEFAULT_OUTPUT_DIR, help="Output directory for BGM clips")
     parser.add_argument("--duration", type=float, default=DEFAULT_DURATION, help=f"Seconds per BGM clip (default: {DEFAULT_DURATION})")
     parser.add_argument("--inference-steps", type=int, default=DEFAULT_INFERENCE_STEPS, help=f"Diffusion steps (default: {DEFAULT_INFERENCE_STEPS})")
+    parser.add_argument("--model", default=ACE_STEP_MODEL, help="ACE-Step DiT checkpoint")
+    parser.add_argument("--lm-model", default=ACE_STEP_LM_MODEL, help="ACE-Step 5Hz LM checkpoint")
+    parser.add_argument("--lm-backend", default="vllm", choices=("vllm", "pt"))
+    parser.add_argument(
+        "--cpu-offload",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Offload VAE/text encoder between phases to preserve DiT inference VRAM",
+    )
+    parser.add_argument("--guidance-scale", type=float, default=7.0)
+    parser.add_argument("--no-thinking", action="store_true", help="Disable the 5Hz semantic LM")
+    parser.add_argument("--clip-attempts", type=int, default=3, help="Quality retry count per clip")
+    parser.add_argument("--proxy", default=os.environ.get("HTTPS_PROXY", "http://127.0.0.1:7890"))
     parser.add_argument("--force", action="store_true", help="Regenerate all clips even if cached")
     parser.add_argument("--dry-run", action="store_true", help="Print what would be generated, skip ACE-Step")
     parser.add_argument("--clips-per-segment", type=int, default=3, help="Number of BGM clips per segment (default: 3, use >1 for variation)")
     args = parser.parse_args()
 
-    segments_path = Path(args.segments)
-    output_dir = Path(args.output_dir)
+    # Resolve CLI paths before ACE-Step changes its working directory for model
+    # discovery. Relative paths therefore keep normal command-line semantics.
+    segments_path = Path(args.segments).expanduser().resolve()
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    manifest_path = output_dir / "bgm_manifest.json"
     clips_per_segment = args.clips_per_segment
+    thinking = not args.no_thinking
+    if args.proxy:
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            os.environ[name] = args.proxy
     start_time = time.time()
 
     print("=" * 60)
@@ -147,6 +267,7 @@ def main() -> int:
     print(f"Output:   {output_dir}")
     print(f"Duration: {args.duration}s per clip, {args.inference_steps} steps")
     print(f"Clips per segment: {clips_per_segment}")
+    print(f"Quality model: {args.model} + {args.lm_model if thinking else 'no LM'}")
 
     # ── Load segments ──
     if not segments_path.exists():
@@ -161,26 +282,84 @@ def main() -> int:
             s["segment_index"] = i + 1
 
     # ── Check existing manifest ──
-    manifest = None
-    if _MANIFEST_PATH.exists() and not args.force:
-        with open(_MANIFEST_PATH, "r", encoding="utf-8") as f:
-            manifest = json.load(f)
+    existing_manifest = None
+    if manifest_path.exists() and not args.force:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            existing_manifest = json.load(f)
+        if (
+            existing_manifest.get("generation_version") != BGM_GENERATION_VERSION
+            or existing_manifest.get("model") != args.model
+            or existing_manifest.get("lm_model") != (args.lm_model if thinking else None)
+            or existing_manifest.get("thinking") != thinking
+            or existing_manifest.get("guidance_scale") != args.guidance_scale
+            or existing_manifest.get("duration_per_segment") != args.duration
+            or existing_manifest.get("inference_steps") != args.inference_steps
+            or existing_manifest.get("clips_per_segment") != clips_per_segment
+        ):
+            existing_manifest = None
+
+    manifest_template = build_manifest(
+        segments,
+        args.duration,
+        args.duration * len(segments),
+        0,
+        clips_per_segment,
+        output_dir=output_dir,
+        inference_steps=args.inference_steps,
+        guidance_scale=args.guidance_scale,
+        thinking=thinking,
+    )
+    manifest_template["model"] = args.model
+    manifest_template["lm_model"] = args.lm_model if thinking else None
+    manifest = json.loads(json.dumps(manifest_template))
+    for entry in manifest["segments"].values():
+        entry["clips"] = []
+
+    # Copy only fully matching completed clips into a clean current manifest.
+    if existing_manifest:
+        old_segments = existing_manifest.get("segments", {})
+        for key, expected_entry in manifest_template["segments"].items():
+            old_entry = old_segments.get(key, {})
+            if (
+                old_entry.get("bgm_type") != expected_entry["bgm_type"]
+                or old_entry.get("prompt") != expected_entry["prompt"]
+            ):
+                continue
+            old_clips = old_entry.get("clips", [])
+            for expected_clip in expected_entry["clips"]:
+                clip = next(
+                    (
+                        item
+                        for item in old_clips
+                        if item.get("clip_index") == expected_clip["clip_index"]
+                        and item.get("base_seed", item.get("seed")) == expected_clip["seed"]
+                    ),
+                    None,
+                )
+                path = output_dir / expected_clip["file"]
+                if clip and path.is_file() and path.stat().st_size > 0:
+                    manifest["segments"][key]["clips"].append(clip)
 
     to_generate = []
     for s in segments:
         idx = s["segment_index"]
         bgm_type = s.get("bgm_type", "unknown")
-        caption = get_bgm_prompt(bgm_type)
+        caption = build_segment_bgm_prompt(s)
 
         for clip_i in range(clips_per_segment):
             out_file = output_dir / f"{idx:03d}_{clip_i}.mp3"
 
             # Skip if already generated
-            if manifest and not args.force:
+            if not args.force:
                 seg_entry = manifest.get("segments", {}).get(str(idx), {})
                 clips_list = seg_entry.get("clips", []) if isinstance(seg_entry, dict) else []
                 clip_meta = next((c for c in clips_list if c.get("clip_index") == clip_i), None)
-                if clip_meta and out_file.exists():
+                if (
+                    seg_entry.get("prompt") == caption
+                    and clip_meta
+                    and clip_meta.get("base_seed", clip_meta.get("seed")) == build_bgm_seed(idx, clip_i)
+                    and out_file.exists()
+                ):
                     print(f"  [{idx:03d}:{clip_i}] [SKIP] {bgm_type:12s} -> {out_file.name} (cached)")
                     continue
 
@@ -191,7 +370,8 @@ def main() -> int:
                 "title": s.get("title", ""),
                 "caption": caption,
                 "output": out_file,
-                "seed": clip_i * 100,  # different seed per clip
+                "seed": build_bgm_seed(idx, clip_i),
+                "bpm": s.get("bgm_tempo_bpm"),
             })
 
     total_clips = len(to_generate)
@@ -206,16 +386,22 @@ def main() -> int:
 
     if not to_generate:
         print("所有片段已生成，无需处理。")
-        # Still build/update manifest
-        manifest = build_manifest(segments, args.duration, args.duration * len(segments), 0, clips_per_segment)
-        save_manifest(manifest)
-        print(f"清单已更新: {_MANIFEST_PATH}")
+        manifest["generation_seconds"] = round(time.time() - start_time, 1)
+        save_manifest(manifest, manifest_path)
+        print(f"清单已更新: {manifest_path}")
         return 0
 
     # ── Initialize ACE-Step DiT model ──
     print("\n[1/2] 加载 ACE-Step DiT 模型...")
     t0 = time.time()
-    dit_handler, GenerationParams_cls, GenerationConfig_cls, _ = _init_ace_step()
+    os.chdir(str(ACE_DIR))
+    os.environ["ACESTEP_CONFIG_PATH"] = args.model
+    os.environ["ACESTEP_LM_MODEL_PATH"] = args.lm_model
+    os.environ["ACESTEP_LM_BACKEND"] = args.lm_backend
+    os.environ["ACESTEP_INIT_LLM"] = "true" if thinking else "false"
+    os.environ["ACESTEP_CPU_OFFLOAD"] = "true" if args.cpu_offload else "false"
+    initialized = _init_ace_step()
+    dit_handler, llm_handler = initialized[0], initialized[1]
     print(f"  模型加载完成 [{time.time() - t0:.1f}s]\n")
 
     # ── Generate BGM clips ──
@@ -233,32 +419,67 @@ def main() -> int:
         print(f"\n  [{idx:03d}:{clip_i}/{len(segments):03d}] {bgm_type:12s} | {title} (seed={seed})")
         t1 = time.time()
 
-        ok = generate_clip(
-            dit_handler=dit_handler,
-            caption=caption,
-            output_path=out_path,
-            duration=args.duration,
-            inference_steps=args.inference_steps,
-            seed=seed,
-        )
+        ok = False
+        used_seed = seed
+        for attempt in range(1, max(1, args.clip_attempts) + 1):
+            used_seed = seed + (attempt - 1) * 7_919
+            try:
+                ok = generate_clip(
+                    dit_handler=dit_handler,
+                    llm_handler=llm_handler,
+                    caption=caption,
+                    output_path=out_path,
+                    duration=args.duration,
+                    inference_steps=args.inference_steps,
+                    seed=used_seed,
+                    bpm=g.get("bpm"),
+                    guidance_scale=args.guidance_scale,
+                    thinking=thinking,
+                )
+            except Exception as exc:
+                ok = False
+                print(f"    [ERROR] generation attempt failed: {exc}")
+            if ok:
+                break
+            print(f"    [RETRY] attempt {attempt}/{max(1, args.clip_attempts)}")
 
         if ok:
             size_mb = out_path.stat().st_size / (1024 * 1024)
             print(f"    [OK] {out_path.name} ({size_mb:.1f} MB) [{time.time() - t1:.1f}s]")
             success_count += 1
+            expected_clips = manifest_template["segments"][str(idx)]["clips"]
+            clip_metadata = next(
+                item for item in expected_clips if item["clip_index"] == clip_i
+            )
+            clip_metadata = dict(
+                clip_metadata,
+                seed=used_seed,
+                quality_validated=True,
+            )
+            if used_seed != seed:
+                clip_metadata["base_seed"] = seed
+            completed_clips = manifest["segments"][str(idx)]["clips"]
+            completed_clips[:] = [
+                item for item in completed_clips if item["clip_index"] != clip_i
+            ]
+            completed_clips.append(clip_metadata)
+            completed_clips.sort(key=lambda item: item["clip_index"])
+            manifest["generation_seconds"] = round(time.time() - start_time, 1)
+            save_manifest(manifest, manifest_path)
         else:
             print(f"    [FAIL] [{time.time() - t1:.1f}s]")
 
     # ── Build and save manifest ──
     total_duration = args.duration * len(segments)
     elapsed = time.time() - start_time
-    manifest = build_manifest(segments, args.duration, total_duration, elapsed, clips_per_segment)
-    save_manifest(manifest)
+    manifest["total_bgm_duration"] = total_duration
+    manifest["generation_seconds"] = round(elapsed, 1)
+    save_manifest(manifest, manifest_path)
 
     print(f"\n{'=' * 60}")
     print(f"完成: {success_count}/{len(to_generate)} 个片段生成成功")
     print(f"总耗时: {elapsed:.1f}s")
-    print(f"清单: {_MANIFEST_PATH}")
+    print(f"清单: {manifest_path}")
     print(f"输出目录: {output_dir}")
     print(f"{'=' * 60}")
 
