@@ -76,6 +76,21 @@ def test_bgm_generator_cli_import_does_not_change_working_directory(tmp_path, mo
     assert Path.cwd() == tmp_path
 
 
+def test_bgm_generator_defaults_to_dit_offload_for_cpu_offload(monkeypatch):
+    from scripts import run_bgm_generate
+
+    monkeypatch.delenv("ACESTEP_CPU_OFFLOAD", raising=False)
+    monkeypatch.delenv("ACESTEP_OFFLOAD_DIT_TO_CPU", raising=False)
+    assert run_bgm_generate._resolve_offload_policy() == (True, True)
+
+    monkeypatch.setenv("ACESTEP_OFFLOAD_DIT_TO_CPU", "false")
+    assert run_bgm_generate._resolve_offload_policy() == (True, False)
+
+    monkeypatch.setenv("ACESTEP_CPU_OFFLOAD", "false")
+    monkeypatch.setenv("ACESTEP_OFFLOAD_DIT_TO_CPU", "true")
+    assert run_bgm_generate._resolve_offload_policy() == (False, False)
+
+
 def test_bgm_manifest_uses_requested_output_directory(tmp_path):
     output_dir = tmp_path / "custom-bgm"
 
