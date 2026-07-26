@@ -30,6 +30,18 @@ os.environ.setdefault("ACESTEP_LM_MODEL_PATH", "acestep-5Hz-lm-1.7B")
 os.environ.setdefault("ACESTEP_DEVICE", "auto")
 os.environ.setdefault("ACESTEP_INIT_LLM", "true")
 os.environ.setdefault("ACESTEP_CPU_OFFLOAD", "true")
+os.environ.setdefault("ACESTEP_OFFLOAD_DIT_TO_CPU", "true")
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    fallback = "true" if default else "false"
+    return os.environ.get(name, fallback).lower() not in {"0", "false", "no"}
+
+
+def _resolve_offload_policy() -> tuple[bool, bool]:
+    cpu_offload = _env_flag("ACESTEP_CPU_OFFLOAD", True)
+    offload_dit = cpu_offload and _env_flag("ACESTEP_OFFLOAD_DIT_TO_CPU", True)
+    return cpu_offload, offload_dit
 
 
 def _init_ace_step(
@@ -44,21 +56,18 @@ def _init_ace_step(
     model = model or os.environ.get("ACESTEP_CONFIG_PATH", ACE_STEP_MODEL)
     lm_model = lm_model or os.environ.get("ACESTEP_LM_MODEL_PATH", ACE_STEP_LM_MODEL)
     lm_backend = lm_backend or os.environ.get("ACESTEP_LM_BACKEND", "vllm")
-    cpu_offload = os.environ.get("ACESTEP_CPU_OFFLOAD", "true").lower() not in {
-        "0",
-        "false",
-        "no",
-    }
+    cpu_offload, offload_dit = _resolve_offload_policy()
     dit_handler = AceStepHandler()
     status, success = dit_handler.initialize_service(
         project_root=str(ACE_DIR),
         config_path=model,
         device="auto",
-        # Keep the large DiT resident, but move the VAE/text encoder back to
-        # CPU between phases.  On a 12 GB RTX 3060 this leaves enough
-        # activation headroom for the 1.7B semantic LM + SFT DiT combination.
+        # The 1.7B vLLM backend remains resident on the 12 GB RTX 3060. Move
+        # the large DiT back to CPU before VAE decode as well; otherwise VRAM
+        # fragmentation eventually leaves <0.5 GB and ACE-Step falls back to
+        # an hours-long CPU VAE decode.
         offload_to_cpu=cpu_offload,
-        offload_dit_to_cpu=False,
+        offload_dit_to_cpu=offload_dit,
     )
     if not success:
         raise RuntimeError(f"ACE-Step DiT initialization failed: {status}")
@@ -238,6 +247,12 @@ def main() -> int:
         default=True,
         help="Offload VAE/text encoder between phases to preserve DiT inference VRAM",
     )
+    parser.add_argument(
+        "--offload-dit",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Offload DiT before VAE decode (recommended for 12 GB GPUs with the vLLM backend)",
+    )
     parser.add_argument("--guidance-scale", type=float, default=7.0)
     parser.add_argument("--no-thinking", action="store_true", help="Disable the 5Hz semantic LM")
     parser.add_argument("--clip-attempts", type=int, default=3, help="Quality retry count per clip")
@@ -268,6 +283,7 @@ def main() -> int:
     print(f"Duration: {args.duration}s per clip, {args.inference_steps} steps")
     print(f"Clips per segment: {clips_per_segment}")
     print(f"Quality model: {args.model} + {args.lm_model if thinking else 'no LM'}")
+    print(f"Memory policy: cpu_offload={args.cpu_offload}, offload_dit={args.offload_dit}")
 
     # ── Load segments ──
     if not segments_path.exists():
@@ -400,6 +416,7 @@ def main() -> int:
     os.environ["ACESTEP_LM_BACKEND"] = args.lm_backend
     os.environ["ACESTEP_INIT_LLM"] = "true" if thinking else "false"
     os.environ["ACESTEP_CPU_OFFLOAD"] = "true" if args.cpu_offload else "false"
+    os.environ["ACESTEP_OFFLOAD_DIT_TO_CPU"] = "true" if args.offload_dit else "false"
     initialized = _init_ace_step()
     dit_handler, llm_handler = initialized[0], initialized[1]
     print(f"  模型加载完成 [{time.time() - t0:.1f}s]\n")

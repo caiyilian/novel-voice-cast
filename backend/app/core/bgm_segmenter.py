@@ -499,6 +499,10 @@ CHUNK_TOOL = [{
     },
 }]
 
+CHUNK_PRIMARY_MAX_TOKENS = 8000
+CHUNK_REVIEW_MAX_TOKENS = 8000
+CHUNK_REVIEW_ATTEMPTS = 6
+
 
 def _chunk_segments_from_result(result: LLMResult) -> list[dict[str, Any]]:
     for call in result.tool_calls:
@@ -595,7 +599,7 @@ def segment_chunk_direct(
             tools=CHUNK_TOOL,
             tool_choice={"type": "function", "function": {"name": "submit_chunk_segmentation"}},
             temperature=temperature,
-            max_tokens=5000,
+            max_tokens=CHUNK_PRIMARY_MAX_TOKENS,
             agent_role="bgm_chunk_primary",
             trace_id=trace_id,
             agent_round=step,
@@ -629,7 +633,9 @@ def segment_chunk_direct(
         {
             "role": "system",
             "content": CHUNK_SYSTEM_PROMPT
-            + "\nYou are the second-pass editor. Independently audit every proposed boundary against the source. Return a complete corrected array, even when no changes are needed.",
+            + "\nYou are the second-pass editor. Independently audit every proposed boundary against the source. "
+            "Return a complete corrected array, even when no changes are needed. Do not narrate your reasoning: "
+            "immediately call submit_chunk_segmentation once, with concise titles and descriptions.",
         },
         {
             "role": "user",
@@ -644,13 +650,13 @@ def segment_chunk_direct(
     review_messages = list(review_base_messages)
     review_problems = ["no review response"]
     review_coherence_corrections = 0
-    for step in range(1, 7):
+    for step in range(1, CHUNK_REVIEW_ATTEMPTS + 1):
         review = client.chat(
             review_messages,
             tools=CHUNK_TOOL,
             tool_choice={"type": "function", "function": {"name": "submit_chunk_segmentation"}},
             temperature=0.0,
-            max_tokens=5000,
+            max_tokens=CHUNK_REVIEW_MAX_TOKENS,
             agent_role="bgm_chunk_reviewer",
             trace_id=trace_id,
             agent_round=step,
@@ -670,6 +676,19 @@ def segment_chunk_direct(
             for warning in review_coherence_warnings:
                 logger.warning("Chunk reviewer warning retained: %s", warning)
             return output
+        finish_reason = "unknown"
+        choices = review.raw.get("choices") if isinstance(review.raw, dict) else None
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            finish_reason = str(choices[0].get("finish_reason") or "unknown")
+        logger.warning(
+            "Chunk reviewer rejected trace=%s attempt=%d/%d finish_reason=%s segments=%d: %s",
+            trace_id,
+            step,
+            CHUNK_REVIEW_ATTEMPTS,
+            finish_reason,
+            len(reviewed_absolute),
+            "; ".join(review_problems),
+        )
         if reviewed_absolute and not review_hard_problems and review_coherence_warnings:
             review_coherence_corrections += 1
         previous = json.dumps(reviewed_absolute, ensure_ascii=False) if reviewed_absolute else (review.content or "")[-2000:]
@@ -679,7 +698,16 @@ def segment_chunk_direct(
             + "\nRejected candidate:\n" + previous
             + "\nAudit again from source and submit a fresh complete corrected tool call.",
         }]
-    raise SegmentationError("Chunk review failed: " + "; ".join(review_problems))
+    # The primary candidate passed all hard coverage/count validation before review.
+    # A reviewer that repeatedly truncates or emits an invalid tool call must not
+    # discard that valid work or prevent the caller from checkpointing the chunk.
+    logger.warning(
+        "Chunk reviewer exhausted trace=%s after %d attempts; falling back to the hard-validated primary candidate: %s",
+        trace_id,
+        CHUNK_REVIEW_ATTEMPTS,
+        "; ".join(review_problems),
+    )
+    return candidate
 
 
 def _chunk_novel(total_lines: int, num_chunks: int = 4, overlap: int = 10) -> list[tuple[int, int]]:
@@ -934,6 +962,9 @@ Use the source excerpt over the title. Classify atmosphere, not isolated keyword
 Consider neighboring segments to maintain score continuity while preserving genuine
 transitions. The English music_prompt must specify mood, period-appropriate
 instrumentation, texture, dynamics, tempo feel, and a beginning-to-end dramatic arc.
+Keep music_prompt concise: target 140-300 characters and never exceed 420 characters.
+Keep instrumentation and key_mode as compact production labels. Keep avoid under 180
+characters and reserve it for unwanted musical/audio traits rather than explanations.
 It must request an instrumental, sparse dialogue underscore with no vocals, lyrics,
 spoken words, sound effects, or oversized trailer impacts. Do not narrate plot events
 or include character names in the music prompt. Cite concrete source lines in evidence.
@@ -985,19 +1016,21 @@ def _request_bgm_decision(
     agent_role: str,
 ) -> dict[str, Any]:
     last_error = "No tool call"
+    last_tool_candidate: Optional[dict[str, Any]] = None
     for step in range(1, max_retries + 1):
         result = client.chat(
             messages,
             tools=TYPE_TOOL,
             tool_choice={"type": "function", "function": {"name": "submit_bgm_type"}},
             temperature=0.05,
-            max_tokens=2400,
+            max_tokens=4000,
             agent_role=agent_role,
             trace_id=f"bgm:type:{segment_index}",
             agent_round=step,
         )
         for call in result.tool_calls:
             if call.name == "submit_bgm_type":
+                last_tool_candidate = call.arguments
                 candidate, last_error = _validate_bgm_type(call.arguments, segment_index)
                 if candidate:
                     return candidate
@@ -1008,6 +1041,23 @@ def _request_bgm_decision(
         else:
             messages.append({"role": "assistant", "content": result.content or ""})
         messages.append({"role": "user", "content": f"Invalid classification: {last_error}. Submit a corrected tool call."})
+    if last_tool_candidate is not None:
+        candidate, repair_error = _validate_bgm_type(
+            last_tool_candidate,
+            segment_index,
+            repair_fields=True,
+        )
+        if candidate:
+            logger.warning(
+                "BGM type segment=%d role=%s exhausted %d attempts; retained the last valid tool result "
+                "after deterministic field repair: %s",
+                segment_index,
+                agent_role,
+                max_retries,
+                last_error,
+            )
+            return candidate
+        last_error = repair_error
     raise SegmentationError(f"BGM type classification failed for segment {segment_index}: {last_error}")
 
 
@@ -1103,17 +1153,31 @@ def label_bgm_types(
             ]
             calls_before = _normalise_usage_summary(client.usage_summary())["calls"]
             primary = _request_bgm_decision(client, messages, one_index, max_retries, "bgm_type_primary")
-            review = _request_bgm_decision(
-                client,
-                [
-                    {"role": "system", "content": BGM_TYPE_PROMPT + "\nAct as an independent second classifier. Challenge keyword matching and continuity bias."},
-                    {"role": "user", "content": f"Segment index: {one_index}\nFirst classifier: {json.dumps(primary, ensure_ascii=False)}\nMetadata: {json.dumps(neighbors, ensure_ascii=False)}\n\nSource excerpt:\n{excerpt}"},
-                ],
-                one_index,
-                max_retries,
-                "bgm_type_reviewer",
-            )
-            if review["bgm_type"] == primary["bgm_type"]:
+            review: Optional[dict[str, Any]] = None
+            review_error = ""
+            try:
+                review = _request_bgm_decision(
+                    client,
+                    [
+                        {"role": "system", "content": BGM_TYPE_PROMPT + "\nAct as an independent second classifier. Challenge keyword matching and continuity bias."},
+                        {"role": "user", "content": f"Segment index: {one_index}\nFirst classifier: {json.dumps(primary, ensure_ascii=False)}\nMetadata: {json.dumps(neighbors, ensure_ascii=False)}\n\nSource excerpt:\n{excerpt}"},
+                    ],
+                    one_index,
+                    max_retries,
+                    "bgm_type_reviewer",
+                )
+            except SegmentationError as exc:
+                review_error = str(exc)
+                logger.warning(
+                    "BGM type reviewer failed for segment %d; retaining the validated primary decision: %s",
+                    one_index,
+                    review_error,
+                )
+            if review is None:
+                decision = dict(primary)
+                decision["review_fallback"] = True
+                decision["review_error"] = review_error
+            elif review["bgm_type"] == primary["bgm_type"]:
                 decision = dict(
                     max((primary, review), key=lambda item: float(item["confidence"]))
                 )
@@ -1124,28 +1188,41 @@ def label_bgm_types(
                     f"Primary: {primary['evidence']} | Review: {review['evidence']}"
                 )
             else:
-                decision = _request_bgm_decision(
-                    client,
-                    [
-                        {
-                            "role": "system",
-                            "content": BGM_TYPE_PROMPT
-                            + "\nAct as the final scoring director. Resolve both drafts and "
-                            "deliver the most source-specific production brief.",
-                        },
-                        {
-                            "role": "user",
-                            "content": f"Segment index: {one_index}\nDrafts: "
-                            f"{json.dumps({'primary': primary, 'review': review}, ensure_ascii=False)}"
-                            f"\nMetadata: {json.dumps(neighbors, ensure_ascii=False)}"
-                            f"\n\nSource excerpt:\n{excerpt}",
-                        },
-                    ],
-                    one_index,
-                    max_retries,
-                    "bgm_type_adjudicator",
-                )
-                decision["adjudicated"] = True
+                try:
+                    decision = _request_bgm_decision(
+                        client,
+                        [
+                            {
+                                "role": "system",
+                                "content": BGM_TYPE_PROMPT
+                                + "\nAct as the final scoring director. Resolve both drafts and "
+                                "deliver the most source-specific production brief.",
+                            },
+                            {
+                                "role": "user",
+                                "content": f"Segment index: {one_index}\nDrafts: "
+                                f"{json.dumps({'primary': primary, 'review': review}, ensure_ascii=False)}"
+                                f"\nMetadata: {json.dumps(neighbors, ensure_ascii=False)}"
+                                f"\n\nSource excerpt:\n{excerpt}",
+                            },
+                        ],
+                        one_index,
+                        max_retries,
+                        "bgm_type_adjudicator",
+                    )
+                    decision["adjudicated"] = True
+                except SegmentationError as exc:
+                    decision = dict(max(
+                        (primary, review), key=lambda item: float(item["confidence"])
+                    ))
+                    decision["adjudication_fallback"] = True
+                    decision["adjudication_error"] = str(exc)
+                    logger.warning(
+                        "BGM type adjudicator failed for segment %d; retaining the higher-confidence "
+                        "validated classifier decision: %s",
+                        one_index,
+                        exc,
+                    )
             decision["review"] = review
             decision["primary_decision"] = primary
             decision["review_decision"] = review
@@ -1197,7 +1274,67 @@ def _scene_excerpt(lines: list[str], start: int, end: int, budget_lines: int = 9
     return "\n".join(f"{line}: {lines[line - 1]}" for line in selected)
 
 
-def _validate_bgm_type(raw: dict[str, Any], expected_index: int) -> tuple[Optional[dict[str, Any]], str]:
+MUSIC_PROMPT_SAFETY_SUFFIX = (
+    "Keep it instrumental and sparse beneath dialogue, with restrained dynamics, clear midrange space, "
+    "a coherent beginning-to-end arc, and no vocals, lyrics, spoken words, sound effects, or oversized trailer impacts."
+)
+AVOID_SAFETY_SUFFIX = "vocals, lyrics, spoken words, sound effects, and oversized trailer impacts"
+
+
+def _truncate_text_at_word(value: str, max_chars: int) -> str:
+    shortened = value[:max_chars].rstrip()
+    if len(value) > max_chars and " " in shortened:
+        shortened = shortened.rsplit(" ", 1)[0]
+    return shortened.rstrip(" ,;:.")
+
+
+def _fit_music_prompt_length(music_prompt: str, fallback: str) -> str:
+    prompt = re.sub(r"\s+", " ", music_prompt).strip() or fallback
+    if len(prompt) < 80:
+        prompt = f"{prompt.rstrip(' ,;:.')}. {MUSIC_PROMPT_SAFETY_SUFFIX}"
+    if len(prompt) > 420:
+        head_budget = 420 - len(MUSIC_PROMPT_SAFETY_SUFFIX) - 2
+        head = _truncate_text_at_word(prompt, head_budget)
+        prompt = f"{head}. {MUSIC_PROMPT_SAFETY_SUFFIX}"
+    return prompt[:420].rstrip()
+
+
+def _fit_bounded_text(value: str, fallback: str, min_chars: int, max_chars: int) -> str:
+    text = re.sub(r"\s+", " ", value).strip()
+    if len(text) < min_chars:
+        text = fallback
+    if len(text) > max_chars:
+        text = _truncate_text_at_word(text, max_chars)
+    return text
+
+
+def _fit_avoid_length(value: str, fallback: str) -> str:
+    text = re.sub(r"\s+", " ", value).strip()
+    if len(text) < 4:
+        return fallback
+    if len(text) > 240:
+        head_budget = 240 - len(AVOID_SAFETY_SUFFIX) - 2
+        head = _truncate_text_at_word(text, head_budget)
+        text = f"{head}; {AVOID_SAFETY_SUFFIX}"
+    return text[:240].rstrip()
+
+
+def _coerce_bgm_number(value: Any, default: float) -> float:
+    if isinstance(value, bool):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        match = re.search(r"[-+]?\d+(?:\.\d+)?", str(value))
+        return float(match.group(0)) if match else default
+
+
+def _validate_bgm_type(
+    raw: dict[str, Any],
+    expected_index: int,
+    *,
+    repair_fields: bool = False,
+) -> tuple[Optional[dict[str, Any]], str]:
     bgm_type = str(raw.get("bgm_type", ""))
     defaults = {
         "music_prompt": (
@@ -1213,13 +1350,48 @@ def _validate_bgm_type(raw: dict[str, Any], expected_index: int) -> tuple[Option
         "transition": "gentle",
         "avoid": "vocals, lyrics, spoken words, sound effects, and oversized impacts",
     }
-    try:
-        index = int(raw.get("segment_index"))
-        confidence = float(raw.get("confidence"))
-        tempo_bpm = int(raw.get("tempo_bpm", defaults["tempo_bpm"]))
-        energy = int(raw.get("energy", defaults["energy"]))
-    except (TypeError, ValueError):
-        return None, "segment_index, confidence, tempo_bpm, and energy must be numeric"
+    numeric_fields_repaired: list[str] = []
+    if repair_fields:
+        index = expected_index
+        confidence = _coerce_bgm_number(raw.get("confidence"), 0.5)
+        if "%" in str(raw.get("confidence", "")) or 1 < confidence <= 100:
+            confidence /= 100
+        confidence = min(1.0, max(0.0, confidence))
+        tempo_bpm = min(180, max(40, round(_coerce_bgm_number(
+            raw.get("tempo_bpm", defaults["tempo_bpm"]), defaults["tempo_bpm"]
+        ))))
+        energy = min(5, max(1, round(_coerce_bgm_number(
+            raw.get("energy", defaults["energy"]), defaults["energy"]
+        ))))
+        numeric_values = {
+            "segment_index": index,
+            "confidence": confidence,
+            "tempo_bpm": tempo_bpm,
+            "energy": energy,
+        }
+        for field, value in numeric_values.items():
+            try:
+                if float(raw.get(field)) != float(value):
+                    numeric_fields_repaired.append(field)
+            except (TypeError, ValueError):
+                numeric_fields_repaired.append(field)
+    else:
+        try:
+            index = int(raw.get("segment_index"))
+        except (TypeError, ValueError):
+            return None, f"segment_index must be numeric (got {raw.get('segment_index')!r})"
+        try:
+            confidence = float(raw.get("confidence"))
+        except (TypeError, ValueError):
+            return None, f"confidence must be numeric (got {raw.get('confidence')!r})"
+        try:
+            tempo_bpm = int(raw.get("tempo_bpm", defaults["tempo_bpm"]))
+        except (TypeError, ValueError):
+            return None, f"tempo_bpm must be numeric (got {raw.get('tempo_bpm')!r})"
+        try:
+            energy = int(raw.get("energy", defaults["energy"]))
+        except (TypeError, ValueError):
+            return None, f"energy must be numeric (got {raw.get('energy')!r})"
     evidence = str(raw.get("evidence", "")).strip()
     music_prompt = re.sub(r"\s+", " ", str(raw.get("music_prompt", defaults["music_prompt"]))).strip()
     instrumentation = re.sub(r"\s+", " ", str(raw.get("instrumentation", defaults["instrumentation"]))).strip()
@@ -1227,6 +1399,29 @@ def _validate_bgm_type(raw: dict[str, Any], expected_index: int) -> tuple[Option
     narrative_arc = str(raw.get("narrative_arc", defaults["narrative_arc"]))
     transition = str(raw.get("transition", defaults["transition"]))
     avoid = re.sub(r"\s+", " ", str(raw.get("avoid", defaults["avoid"]))).strip()
+    repaired_fields: list[str] = []
+    if repair_fields:
+        repaired_values = {
+            "music_prompt": _fit_music_prompt_length(music_prompt, defaults["music_prompt"]),
+            "instrumentation": _fit_bounded_text(
+                instrumentation, defaults["instrumentation"], 4, 240
+            ),
+            "key_mode": _fit_bounded_text(key_mode, defaults["key_mode"], 2, 80),
+            "avoid": _fit_avoid_length(avoid, defaults["avoid"]),
+        }
+        original_values = {
+            "music_prompt": music_prompt,
+            "instrumentation": instrumentation,
+            "key_mode": key_mode,
+            "avoid": avoid,
+        }
+        repaired_fields = [
+            field for field, value in repaired_values.items() if value != original_values[field]
+        ]
+        music_prompt = repaired_values["music_prompt"]
+        instrumentation = repaired_values["instrumentation"]
+        key_mode = repaired_values["key_mode"]
+        avoid = repaired_values["avoid"]
     if index != expected_index:
         return None, f"segment_index must be {expected_index}"
     if bgm_type not in BGM_TYPES:
@@ -1236,21 +1431,21 @@ def _validate_bgm_type(raw: dict[str, Any], expected_index: int) -> tuple[Option
     if len(evidence) < 4:
         return None, "evidence is too short"
     if not 80 <= len(music_prompt) <= 420:
-        return None, "music_prompt must contain 80..420 characters"
+        return None, f"music_prompt must contain 80..420 characters (got {len(music_prompt)})"
     if not 4 <= len(instrumentation) <= 240:
-        return None, "instrumentation must contain 4..240 characters"
+        return None, f"instrumentation must contain 4..240 characters (got {len(instrumentation)})"
     if not 40 <= tempo_bpm <= 180:
         return None, "tempo_bpm must be between 40 and 180"
     if not 1 <= energy <= 5:
         return None, "energy must be between 1 and 5"
     if not 2 <= len(key_mode) <= 80:
-        return None, "key_mode must contain 2..80 characters"
+        return None, f"key_mode must contain 2..80 characters (got {len(key_mode)})"
     if narrative_arc not in {"stable", "building", "releasing", "rise_and_fall"}:
         return None, "narrative_arc is invalid"
     if transition not in {"seamless", "gentle", "abrupt"}:
         return None, "transition is invalid"
     if not 4 <= len(avoid) <= 240:
-        return None, "avoid must contain 4..240 characters"
+        return None, f"avoid must contain 4..240 characters (got {len(avoid)})"
     return {
         "segment_index": index,
         "bgm_type": bgm_type,
@@ -1264,6 +1459,9 @@ def _validate_bgm_type(raw: dict[str, Any], expected_index: int) -> tuple[Option
         "narrative_arc": narrative_arc,
         "transition": transition,
         "avoid": avoid,
+        "music_prompt_repaired": "music_prompt" in repaired_fields,
+        "text_fields_repaired": repaired_fields,
+        "numeric_fields_repaired": numeric_fields_repaired,
     }, ""
 
 
