@@ -14,6 +14,7 @@ from app.core.bgm_segmenter import (  # noqa: E402
     _merge_title_card_segments,
     _musical_coherence_problems,
     _natural_chunks,
+    _request_bgm_decision,
     _segment_inputs_hash,
     bgm_source_hash,
     label_bgm_types,
@@ -170,6 +171,25 @@ def test_chunk_segmentation_always_gets_second_pass_review():
     assert segments == [{"start_line": 1, "end_line": 3, "title": "one", "description": "continuous scene"}]
 
 
+def test_chunked_segmentation_checkpoints_valid_primary_when_reviewer_never_submits(tmp_path, caplog):
+    candidate = '[{"start_line":1,"end_line":3,"title":"one","description":"continuous scene"}]'
+    client = DirectClient([LLMResult(content=candidate), *[LLMResult() for _ in range(6)]])
+    checkpoint_path = tmp_path / "segments.json"
+
+    segments = segment_novel_chunked(
+        "one\ntwo\nthree",
+        client=client,
+        num_chunks=1,
+        checkpoint_path=checkpoint_path,
+    )
+
+    payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    assert client.calls == 7
+    assert segments[0]["title"] == "one"
+    assert payload["chunks"]["0"][0]["title"] == "one"
+    assert "falling back to the hard-validated primary candidate" in caplog.text
+
+
 def test_bgm_type_is_independently_reviewed(tmp_path):
     primary = LLMResult(tool_calls=[ToolCall("p", "submit_bgm_type", {
         "segment_index": 1, "bgm_type": "suspense", "confidence": 0.8, "evidence": "line 2 hidden danger",
@@ -189,6 +209,95 @@ def test_bgm_type_is_independently_reviewed(tmp_path):
 
     assert result[0]["bgm_type"] == "suspense"
     assert result[0]["bgm_agent_calls"] == 2
+
+
+def test_bgm_type_repairs_last_tool_prompt_when_retries_end_without_a_tool_call(caplog):
+    raw = {
+        "segment_index": "segment 1",
+        "bgm_type": "daily",
+        "confidence": "80%",
+        "evidence": "lines 1-3 establish a quiet journey",
+        "music_prompt": "Warm lute and soft strings.",
+        "instrumentation": "lute and chamber strings " * 20,
+        "tempo_bpm": "72 BPM",
+        "key_mode": "C",
+        "energy": "2/5",
+        "narrative_arc": "stable",
+        "transition": "gentle",
+        "avoid": "harsh percussion, dense brass, modern synthesizers, and disruptive effects " * 10,
+    }
+    client = DirectClient([
+        LLMResult(tool_calls=[ToolCall("p", "submit_bgm_type", raw)]),
+        LLMResult(),
+        LLMResult(),
+        LLMResult(),
+    ])
+
+    result = _request_bgm_decision(
+        client,
+        [{"role": "user", "content": "classify segment 1"}],
+        segment_index=1,
+        max_retries=4,
+        agent_role="bgm_type_primary",
+    )
+
+    assert client.calls == 4
+    assert result["music_prompt"].startswith("Warm lute and soft strings.")
+    assert 80 <= len(result["music_prompt"]) <= 420
+    assert 4 <= len(result["instrumentation"]) <= 240
+    assert result["key_mode"] == "minor or modal"
+    assert 4 <= len(result["avoid"]) <= 240
+    assert result["avoid"].endswith("oversized trailer impacts")
+    assert result["segment_index"] == 1
+    assert result["confidence"] == pytest.approx(0.8)
+    assert result["tempo_bpm"] == 72
+    assert result["energy"] == 2
+    assert result["music_prompt_repaired"] is True
+    assert set(result["text_fields_repaired"]) == {
+        "music_prompt",
+        "instrumentation",
+        "key_mode",
+        "avoid",
+    }
+    assert set(result["numeric_fields_repaired"]) == {
+        "segment_index",
+        "confidence",
+        "tempo_bpm",
+        "energy",
+    }
+    assert "retained the last valid tool result" in caplog.text
+
+
+def test_bgm_type_reviewer_failure_checkpoints_valid_primary(tmp_path, caplog):
+    primary = LLMResult(tool_calls=[ToolCall("p", "submit_bgm_type", {
+        "segment_index": 1,
+        "bgm_type": "daily",
+        "confidence": 0.82,
+        "evidence": "line 2 describes an ordinary quiet journey",
+        "music_prompt": "A warm, restrained medieval travel underscore led by soft lute and chamber strings, moving at an unhurried walking pulse with sparse dynamics and a calm scene-length arc beneath dialogue, entirely instrumental and without vocals, lyrics, speech, sound effects, or trailer impacts.",
+        "instrumentation": "soft lute, chamber strings, and light wooden flute",
+        "tempo_bpm": 72,
+        "key_mode": "D minor",
+        "energy": 2,
+        "narrative_arc": "stable",
+        "transition": "gentle",
+        "avoid": "vocals, lyrics, speech, sound effects, dense percussion, and trailer impacts",
+    })])
+    client = DirectClient([primary, LLMResult(), LLMResult(), LLMResult(), LLMResult()])
+    checkpoint_path = tmp_path / "types.json"
+
+    result = label_bgm_types(
+        [{"start_line": 1, "end_line": 3, "title": "journey", "description": "quiet road"}],
+        client=client,
+        novel_text="one\ntwo\nthree",
+        checkpoint_path=checkpoint_path,
+    )
+
+    payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    assert client.calls == 5
+    assert result[0]["bgm_type"] == "daily"
+    assert payload["results"]["1"]["review_fallback"] is True
+    assert "retaining the validated primary decision" in caplog.text
 
 
 def test_chunked_resume_accumulates_only_new_client_usage(tmp_path):
