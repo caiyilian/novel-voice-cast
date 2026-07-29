@@ -18,7 +18,8 @@
     "package:win": "npm run prepare:electron && npm run build && cross-env ELECTRON_GET_USE_PROXY=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --win nsis --config electron-builder.config.ts"
   },
   "dependencies": {
-    "solid-js": "1.9.14"
+    "solid-js": "1.9.14",
+    "yaml": "2.9.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",

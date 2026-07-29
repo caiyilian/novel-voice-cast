@@ -53,6 +53,18 @@ export interface PipelineLogEntry {
   stage: PipelineStage | null
 }
 
+export type ManifestStatus = "not-read" | "valid" | "missing" | "invalid" | "stale"
+
+export interface PipelineArtifact {
+  path: string
+  exists: boolean
+}
+
+export interface OpenDirectoryResult {
+  ok: boolean
+  error: string | null
+}
+
 export interface PipelineStartRequest {
   novelPath: string
   labelsPath: string
@@ -79,6 +91,11 @@ export interface PipelineSnapshot {
   operation: string
   stages: StageRuntime[]
   logs: PipelineLogEntry[]
+  totalElapsedSeconds: number
+  manifestStatus: ManifestStatus
+  manifestMessage: string
+  artifacts: PipelineArtifact[]
+  outputDirectoryAvailable: boolean
 }
 
 export type PipelineEvent =
@@ -107,5 +124,6 @@ export interface NovelVoiceCastAPI {
   getPipelineState: () => Promise<PipelineSnapshot>
   startPipeline: (request: PipelineStartRequest) => Promise<PipelineSnapshot>
   stopPipeline: () => Promise<PipelineSnapshot>
+  openOutputDirectory: () => Promise<OpenDirectoryResult>
   onPipelineEvent: (callback: (event: PipelineEvent) => void) => () => void
 }

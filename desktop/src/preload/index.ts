@@ -13,6 +13,7 @@ const api: NovelVoiceCastAPI = Object.freeze({
   getPipelineState: () => ipcRenderer.invoke("pipeline:get-state"),
   startPipeline: (request: PipelineStartRequest) => ipcRenderer.invoke("pipeline:start", request),
   stopPipeline: () => ipcRenderer.invoke("pipeline:stop"),
+  openOutputDirectory: () => ipcRenderer.invoke("output:open-directory"),
   onPipelineEvent: (callback: (event: PipelineEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, pipelineEvent: PipelineEvent) => {
       callback(pipelineEvent)
