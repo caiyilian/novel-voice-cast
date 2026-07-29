@@ -10,6 +10,8 @@ sys.path.insert(0, str(ROOT / "backend"))
 from app.core.llm_client import LLMResult, ToolCall  # noqa: E402
 from app.core.visual_prompt_auditor import (  # noqa: E402
     VISUAL_PROMPT_PIPELINE_VERSION,
+    _contains_entity,
+    _validate_candidate,
     audit_visual_prompt,
     audit_visual_prompts,
 )
@@ -137,6 +139,7 @@ def test_wheat_simile_never_materializes_wolves_and_uses_adjudication():
 def test_checkpoint_resume_and_input_change_invalidation(tmp_path):
     checkpoint = tmp_path / "visual_prompt.checkpoint.json"
     prompt = "wind-bent wheat"
+    completed_callbacks = []
     first_client = ScriptedClient([
         ("submit_visual_prompt_rewrite", _candidate(prompt)),
         ("submit_visual_prompt_review", _candidate(prompt, verdict="approve")),
@@ -147,12 +150,14 @@ def test_checkpoint_resume_and_input_change_invalidation(tmp_path):
         "Wheat bends in the wind.",
         client=first_client,
         checkpoint_path=checkpoint,
+        on_completed=lambda index, result: completed_callbacks.append((index, result)),
     )
 
     payload = json.loads(checkpoint.read_text(encoding="utf-8"))
     assert payload["pipeline_version"] == VISUAL_PROMPT_PIPELINE_VERSION
     assert payload["completed_indices"] == [0]
     assert payload["results"] == first
+    assert completed_callbacks == [(0, first[0])]
     assert payload["llm_usage"] == {
         "calls": 2,
         "prompt_tokens": 20,
@@ -162,14 +167,17 @@ def test_checkpoint_resume_and_input_change_invalidation(tmp_path):
     assert not list(tmp_path.glob("*.tmp"))
 
     resumed_client = ScriptedClient([])
+    resumed_callbacks = []
     resumed = audit_visual_prompts(
         [_plan(prompt)],
         "Wheat bends in the wind.",
         client=resumed_client,
         checkpoint_path=checkpoint,
+        on_completed=lambda index, result: resumed_callbacks.append((index, result)),
     )
     assert resumed == first
     assert resumed_client.calls == []
+    assert resumed_callbacks == [(0, first[0])]
 
     changed_client = ScriptedClient([
         ("submit_visual_prompt_rewrite", _candidate(prompt)),
@@ -230,6 +238,78 @@ def test_invalid_evidence_line_is_rejected_then_retried():
     assert "invalid: [2]" in client.calls[1]["messages"][-1]["content"]
 
 
+def test_compound_exclusion_does_not_ban_literal_component_word():
+    assert _contains_entity("an elderly villager receives the furs", "elderly villager")
+    assert _contains_entity("two elderly villagers receive the furs", "elderly villager")
+    assert not _contains_entity("a villager receives the furs", "elderly villager")
+    assert _contains_entity("a wolf crosses the field", "wolves")
+
+
+def test_excluded_entity_leak_has_deterministic_clause_repair_fallback():
+    plan = _plan("Lawrence watches villagers at sunset")
+    raw = _candidate(
+        "Lawrence watches villagers at sunset, without religious rituals.",
+        excluded=("rituals",),
+    )
+
+    with pytest.raises(ValueError, match="excluded nonliteral entities"):
+        _validate_candidate(raw, plan, "Wheat bends in the wind.", None)
+
+    repaired = _validate_candidate(
+        raw,
+        plan,
+        "Wheat bends in the wind.",
+        None,
+        repair_excluded_leaks=True,
+    )
+
+    assert repaired["audited_prompt"] == "Lawrence watches villagers at sunset"
+    assert repaired["deterministic_repairs"] == ["rituals"]
+
+
+def test_translated_retained_aliases_are_canonicalized_to_cjk_plan_characters():
+    plan = _plan("A young knight speaks to Lawrence beside wind-bent wheat")
+    plan["characters"] = ["骑士", "罗伦斯"]
+    value = _candidate("A young knight speaks to Lawrence beside wind-bent wheat")
+    value["retained_characters"] = ["young knight", "Lawrence"]
+    review = dict(value, verdict="approve")
+    client = ScriptedClient([
+        ("submit_visual_prompt_rewrite", value),
+        ("submit_visual_prompt_review", review),
+        ("submit_visual_prompt_adjudication", value),
+    ])
+
+    result = audit_visual_prompt(
+        plan,
+        "骑士 speaks to 罗伦斯 beside wheat in the wind.",
+        client=client,
+    )
+
+    assert result["retained_characters"] == ["骑士", "罗伦斯"]
+    assert "Lawrence" in result["audited_prompt"]
+
+
+def test_missing_cjk_retained_metadata_is_advisory_not_a_pipeline_blocker():
+    plan = _plan("Lawrence faces a wolf-eared girl beside wind-bent wheat")
+    plan["characters"] = ["罗伦斯", "赫萝"]
+    value = _candidate("Lawrence faces a wolf-eared girl beside wind-bent wheat")
+    value["retained_characters"] = []
+    review = dict(value, verdict="approve")
+    client = ScriptedClient([
+        ("submit_visual_prompt_rewrite", value),
+        ("submit_visual_prompt_review", review),
+    ])
+
+    result = audit_visual_prompt(
+        plan,
+        "罗伦斯拔剑面对赫萝。",
+        client=client,
+    )
+
+    assert result["retained_characters"] == ["罗伦斯", "赫萝"]
+    assert result["decision_chain"][0]["reported_retained_characters"] == []
+
+
 def test_character_card_can_add_stated_appearance_but_character_must_remain():
     plan = _plan("Agnes standing in wheat", start_line=1, end_line=1)
     plan["characters"] = ["Agnes"]
@@ -258,13 +338,16 @@ def test_character_card_can_add_stated_appearance_but_character_must_remain():
 
 
 @pytest.mark.parametrize("bad_line", [0, 2, 99])
-def test_evidence_line_validation_exhaustion_raises(bad_line):
+def test_evidence_line_validation_exhaustion_uses_reviewable_plan_fallback(bad_line):
     invalid = _candidate("wind-bent wheat", lines=(bad_line,))
     client = ScriptedClient([
         ("submit_visual_prompt_rewrite", invalid),
         ("submit_visual_prompt_rewrite", invalid),
         ("submit_visual_prompt_rewrite", invalid),
+        ("submit_visual_prompt_review", _candidate("wind-bent wheat", verdict="approve")),
     ])
 
-    with pytest.raises(Exception, match="evidence"):
-        audit_visual_prompt(_plan(), "Wheat bends in the wind.", client=client)
+    result = audit_visual_prompt(_plan(), "Wheat bends in the wind.", client=client)
+
+    assert result["audited_prompt"] == "wind-bent wheat"
+    assert "evidence" in result["decision_chain"][0]["deterministic_fallback_reason"]

@@ -16,8 +16,8 @@ from typing import Any, Dict, List, Optional
 BGM_SEGMENTS_PATH = Path("backend/data/bgm_segments.json")
 BGM_OUTPUT_DIR = Path("output/bgm")
 BGM_MANIFEST_PATH = BGM_OUTPUT_DIR / "bgm_manifest.json"
-BGM_GENERATION_VERSION = 3
-ACE_STEP_MODEL = "acestep-v15-sft"
+BGM_GENERATION_VERSION = 4
+ACE_STEP_MODEL = "acestep-v15-turbo"
 ACE_STEP_LM_MODEL = "acestep-5Hz-lm-1.7B"
 
 # ── ACE-Step caption prompts per BGM type ──────────────────────────────
@@ -77,7 +77,6 @@ def build_segment_bgm_prompt(segment: Dict[str, Any]) -> str:
     base = get_bgm_prompt(str(segment.get("bgm_type", "unknown")))
     reviewed = re.sub(r"\s+", " ", str(segment.get("bgm_music_prompt", ""))).strip()
     if reviewed:
-        prompt = reviewed[:260].rstrip(" ,.;:")
         details = []
         if segment.get("bgm_tempo_bpm"):
             details.append(f"approximately {int(segment['bgm_tempo_bpm'])} BPM")
@@ -86,14 +85,27 @@ def build_segment_bgm_prompt(segment: Dict[str, Any]) -> str:
         if segment.get("bgm_narrative_arc"):
             details.append(f"{segment['bgm_narrative_arc']} dramatic arc")
         detail_text = ", ".join(details)
-        suffix = (
+        tail = (
             f". {detail_text}." if detail_text else "."
         ) + (
-            " Instrumental cinematic underscore only; sparse midrange, controlled bass, "
-            "restrained dynamics, no vocals, no lyrics, no spoken words, no sound effects, "
-            "no abrupt ending, and enough space for narration."
+            " Instrumental score with an evolving melody and clear harmony; narration-friendly "
+            "arrangement, gentle dynamics, and controlled low end. No vocals, speech, sound "
+            "effects, repetitive thumps, footstep-like pulses, noise beds, static drones, or "
+            "abrupt ending."
         )
-        return prompt + suffix
+        # ACE-Step consumes at most 500 caption characters. Preserve the
+        # musical/noise exclusions at the tail instead of silently truncating
+        # them after an overlong reviewed scene prompt.
+        reviewed_limit = max(80, 500 - len(tail))
+        prompt = reviewed[:reviewed_limit]
+        if len(reviewed) > reviewed_limit:
+            sentence_end = max(prompt.rfind(mark) for mark in ".;!?")
+            if sentence_end >= 80:
+                prompt = prompt[: sentence_end + 1]
+            elif " " in prompt:
+                prompt = prompt.rsplit(" ", 1)[0]
+        prompt = prompt.rstrip(" ,.;:")
+        return prompt + tail
     evidence = str(segment.get("bgm_evidence", "")).split(" | Review:", 1)[0]
     evidence = re.sub(r"^Primary:\s*", "", evidence, flags=re.IGNORECASE)
     evidence = re.sub(r"\s+", " ", evidence).strip()
@@ -107,8 +119,8 @@ def build_segment_bgm_prompt(segment: Dict[str, Any]) -> str:
 
     direction = (
         f"{base}. Scene-specific emotional direction: {evidence}. "
-        "Instrumental underscore only, no vocals, restrained dynamics, "
-        "and a sparse arrangement that stays beneath spoken dialogue."
+        "Instrumental underscore with a coherent melody and harmonic movement, no vocals, "
+        "restrained dynamics, and no repetitive thumps, noise beds, or sound effects."
     )
     return direction
 
@@ -155,7 +167,7 @@ def build_manifest(
     output_dir: Path = BGM_OUTPUT_DIR,
     inference_steps: int = 8,
     guidance_scale: float = 7.0,
-    thinking: bool = True,
+    thinking: bool = False,
 ) -> Dict[str, Any]:
     """Build the BGM manifest dict."""
     segment_map: Dict[str, Dict[str, Any]] = {}

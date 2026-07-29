@@ -14,6 +14,7 @@ from app.core.llm_client import (  # noqa: E402
     LLMClient,
     LLMResult,
     RateLimited,
+    RetryableError,
 )
 from app.core.ollama_client import OllamaClient, OllamaConfig, OllamaError  # noqa: E402
 
@@ -54,6 +55,41 @@ def test_429_balance_error_is_treated_as_quota(monkeypatch):
         LLMClient._call_openai(
             base_url="https://example.test/v1",
             model="deepseek-v4-flash",
+            api_key="key",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+
+
+def test_404_model_route_not_found_is_retryable(monkeypatch):
+    monkeypatch.setattr(
+        llm_client.requests,
+        "post",
+        lambda *args, **kwargs: FakeResponse(
+            404,
+            '{"error":{"message":"model route not found","type":"not_found_error"}}',
+        ),
+    )
+
+    with pytest.raises(RetryableError, match="model route not found"):
+        LLMClient._call_openai(
+            base_url="https://example.test/v1",
+            model="sensenova-6.7-flash-lite",
+            api_key="key",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+
+
+def test_unrelated_404_remains_fatal(monkeypatch):
+    monkeypatch.setattr(
+        llm_client.requests,
+        "post",
+        lambda *args, **kwargs: FakeResponse(404, '{"error":{"message":"unknown endpoint"}}'),
+    )
+
+    with pytest.raises(llm_client.FatalLLMError, match="unknown endpoint"):
+        LLMClient._call_openai(
+            base_url="https://example.test/v1",
+            model="sensenova-6.7-flash-lite",
             api_key="key",
             messages=[{"role": "user", "content": "hello"}],
         )

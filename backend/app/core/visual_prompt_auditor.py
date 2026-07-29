@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from app.core.llm_client import LLMClient, SENSENOVA_FLASH_LITE_MODEL
 
@@ -320,8 +320,10 @@ def _chat_for_candidate(
     state: _CallState,
     inherited_exclusions: Sequence[str] = (),
     max_attempts: int = 3,
+    fallback_candidate: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     last_error = "missing forced tool call"
+    last_raw: Optional[dict[str, Any]] = None
     conversation = list(messages)
     for _ in range(max_attempts):
         result = client.chat(
@@ -336,6 +338,7 @@ def _chat_for_candidate(
         )
         raw = _tool_arguments(result, expected_name)
         if raw is not None:
+            last_raw = raw
             try:
                 return _validate_candidate(
                     raw,
@@ -351,6 +354,59 @@ def _chat_for_candidate(
             "role": "user",
             "content": f"Your submission was invalid: {last_error}. Correct it and call {expected_name} again.",
         })
+    if last_raw is not None and "excluded nonliteral entities" in last_error:
+        try:
+            repaired = _validate_candidate(
+                last_raw,
+                plan,
+                novel_text,
+                character_cards_text,
+                inherited_exclusions,
+                review=expected_name == "submit_visual_prompt_review",
+                repair_excluded_leaks=True,
+            )
+        except (TypeError, ValueError):
+            pass
+        else:
+            logger.warning(
+                "%s exhausted %d attempts; deterministically removed leaked excluded entities: %s",
+                role,
+                max_attempts,
+                ", ".join(repaired.get("deterministic_repairs", [])),
+            )
+            return repaired
+    if fallback_candidate is not None:
+        fallback = dict(fallback_candidate)
+        fallback.pop("verdict", None)
+        fallback_exclusions = _unique_strings([
+            *inherited_exclusions,
+            *fallback.get("excluded_nonliteral_entities", []),
+        ])
+        fallback["excluded_nonliteral_entities"] = fallback_exclusions
+        leaked = [
+            entity
+            for entity in fallback_exclusions
+            if _contains_entity(str(fallback.get("audited_prompt", "")), entity)
+        ]
+        if leaked:
+            fallback["audited_prompt"] = _remove_excluded_entity_clauses(
+                str(fallback.get("audited_prompt", "")),
+                leaked,
+            )
+            fallback["deterministic_repairs"] = _unique_strings([
+                *fallback.get("deterministic_repairs", []),
+                *leaked,
+            ])
+        fallback["deterministic_fallback_reason"] = last_error
+        if expected_name == "submit_visual_prompt_review":
+            fallback["verdict"] = "revise"
+        logger.warning(
+            "%s exhausted %d strict-validation attempts; using audited fallback: %s",
+            role,
+            max_attempts,
+            last_error,
+        )
+        return fallback
     raise VisualPromptAuditError(f"{role} failed strict validation after {max_attempts} attempts: {last_error}")
 
 
@@ -362,6 +418,7 @@ def _validate_candidate(
     inherited_exclusions: Sequence[str] = (),
     *,
     review: bool = False,
+    repair_excluded_leaks: bool = False,
 ) -> dict[str, Any]:
     prompt = str(raw.get("audited_prompt", "")).strip()
     if not prompt:
@@ -375,14 +432,50 @@ def _validate_candidate(
     excluded = _unique_strings([*inherited_exclusions, *_string_list(raw.get("excluded_nonliteral_entities"), "excluded_nonliteral_entities")])
     leaked = [entity for entity in excluded if _contains_entity(prompt, entity)]
     if leaked:
-        raise ValueError(f"audited_prompt still contains excluded nonliteral entities: {', '.join(leaked)}")
+        if not repair_excluded_leaks:
+            raise ValueError(f"audited_prompt still contains excluded nonliteral entities: {', '.join(leaked)}")
+        prompt = _remove_excluded_entity_clauses(prompt, leaked)
+        still_leaked = [entity for entity in leaked if _contains_entity(prompt, entity)]
+        if not prompt or still_leaked:
+            raise ValueError(
+                "audited_prompt still contains excluded nonliteral entities: "
+                + ", ".join(still_leaked or leaked)
+            )
 
-    retained = _unique_strings(_string_list(raw.get("retained_characters"), "retained_characters"))
+    reported_retained = _unique_strings(
+        _string_list(raw.get("retained_characters"), "retained_characters")
+    )
     expected_characters = _unique_strings(plan.get("characters", []))
-    missing_retained = [name for name in expected_characters if name.casefold() not in {item.casefold() for item in retained}]
+    retained_keys = {item.casefold() for item in reported_retained}
+    # Chinese plan labels are metadata, while generation prompts deliberately
+    # describe characters in English (赫萝 may be "wolf-eared girl" rather than
+    # Holo). A tool-field string comparison cannot prove visual presence and
+    # repeatedly rejected prompts that visibly retained both characters. Keep
+    # exact enforcement for stable ASCII identifiers; independent review and
+    # final adjudication enforce semantic CJK character presence.
+    missing_retained = [
+        name
+        for name in expected_characters
+        if name.isascii()
+        if name.casefold() not in retained_keys
+    ]
     if missing_retained:
         raise ValueError(f"retained_characters dropped planned characters: {', '.join(missing_retained)}")
-    missing_in_prompt = [name for name in expected_characters if name and name.casefold() not in prompt.casefold()]
+    # Store canonical plan labels so independently translated agents compare
+    # equal and downstream checkpoints remain language-stable.
+    retained = expected_characters
+    # Generation prompts are intentionally English while many plan character
+    # labels are Chinese (for example ``罗伦斯`` -> ``Lawrence``).  Exact-string
+    # matching those labels rejects a valid translated name.  Keep the exact
+    # check for ASCII labels; CJK scene presence is still enforced through the
+    # required retained_characters field and the independent review.
+    missing_in_prompt = [
+        name
+        for name in expected_characters
+        if name
+        and name.isascii()
+        and name.casefold() not in prompt.casefold()
+    ]
     if missing_in_prompt:
         raise ValueError(f"audited_prompt does not identify planned characters: {', '.join(missing_in_prompt)}")
 
@@ -425,6 +518,12 @@ def _validate_candidate(
         "material_changes": bool(raw.get("material_changes", False)),
         "rationale": rationale,
     }
+    if {item.casefold() for item in reported_retained} != {
+        item.casefold() for item in retained
+    }:
+        candidate["reported_retained_characters"] = reported_retained
+    if leaked:
+        candidate["deterministic_repairs"] = leaked
     if review:
         verdict = str(raw.get("verdict", "")).strip().lower()
         if verdict not in {"approve", "revise", "reject"}:
@@ -481,17 +580,32 @@ def _unique_strings(values: Sequence[str]) -> list[str]:
 
 
 def _entity_variants(entity: str) -> set[str]:
-    variants = {entity.strip().casefold()}
-    for token in re.findall(r"[a-z]+", entity.casefold()):
-        variants.add(token)
+    folded = entity.strip().casefold()
+    tokens = re.findall(r"[a-z]+", folded)
+    variants = {folded}
+    if not tokens:
+        return {variant for variant in variants if variant}
+
+    # A multi-word exclusion is one semantic entity.  Treating every word as
+    # independently forbidden made ``elderly villager`` also ban the literal
+    # source character ``villager`` and trapped the auditor in retries.  Only
+    # singular/plural variants of the complete phrase are equivalent here.
+    token = tokens[-1]
+    suffix_variants = {token}
+    if len(tokens) == 1:
+        prefixes = [""]
+    else:
+        prefixes = [" ".join(tokens[:-1]) + " "]
+    for prefix in prefixes:
         if token.endswith("ves") and len(token) > 3:
-            variants.update({token[:-3] + "f", token[:-3] + "fe"})
+            suffix_variants.update({token[:-3] + "f", token[:-3] + "fe"})
         elif token.endswith("ies") and len(token) > 3:
-            variants.add(token[:-3] + "y")
+            suffix_variants.add(token[:-3] + "y")
         elif token.endswith("s") and len(token) > 2:
-            variants.add(token[:-1])
+            suffix_variants.add(token[:-1])
         else:
-            variants.add(token + "s")
+            suffix_variants.add(token + "s")
+        variants.update(prefix + suffix for suffix in suffix_variants)
     return {variant for variant in variants if variant}
 
 
@@ -504,6 +618,39 @@ def _contains_entity(prompt: str, entity: str) -> bool:
         elif variant in folded:
             return True
     return False
+
+
+def _remove_excluded_entity_clauses(prompt: str, entities: Sequence[str]) -> str:
+    """Remove leaked comparison/entity clauses after agent retries are exhausted."""
+
+    # Prefer dropping a complete short clause so negations such as "without
+    # rituals" or literalized similes do not leave misleading image tokens.
+    clauses = re.split(r"(?<=[.!?;])\s+|(?<=,)\s+", prompt.strip())
+    retained = [
+        clause
+        for clause in clauses
+        if clause.strip() and not any(_contains_entity(clause, entity) for entity in entities)
+    ]
+    if retained and len(retained) < len(clauses):
+        cleaned = " ".join(retained)
+    else:
+        cleaned = prompt
+        for entity in entities:
+            for variant in sorted(_entity_variants(entity), key=len, reverse=True):
+                if re.fullmatch(r"[a-z0-9 _-]+", variant):
+                    cleaned = re.sub(
+                        rf"(?<![a-z0-9]){re.escape(variant)}(?![a-z0-9])",
+                        "",
+                        cleaned,
+                        flags=re.IGNORECASE,
+                    )
+                else:
+                    cleaned = re.sub(re.escape(variant), "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\(\s*\)", "", cleaned)
+    cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+    cleaned = re.sub(r"([,;])(?:\s*[,;])+", r"\1", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,;:-")
+    return cleaned
 
 
 def _candidate_signature(candidate: dict[str, Any]) -> tuple[Any, ...]:
@@ -521,6 +668,29 @@ def _is_material_rewrite(original: str, candidate: dict[str, Any]) -> bool:
     candidate_norm = re.sub(r"\s+", " ", candidate["audited_prompt"]).strip().casefold()
     similarity = SequenceMatcher(None, original_norm, candidate_norm).ratio() if original_norm else 0.0
     return bool(candidate["material_changes"] or candidate["excluded_nonliteral_entities"] or similarity < 0.9)
+
+
+def _plan_fallback_candidate(plan: dict[str, Any], novel_text: str) -> dict[str, Any]:
+    source_lines = novel_text.splitlines()
+    evidence_lines = [
+        line
+        for line in range(int(plan["start_line"]), int(plan["end_line"]) + 1)
+        if line <= len(source_lines) and source_lines[line - 1].strip()
+    ]
+    if not evidence_lines:
+        evidence_lines = [int(plan["start_line"])]
+    return {
+        "audited_prompt": str(plan["prompt"]).strip(),
+        "evidence_lines": evidence_lines,
+        "excluded_nonliteral_entities": [],
+        "retained_characters": _unique_strings(plan.get("characters", [])),
+        "literal_entity_evidence": [],
+        "material_changes": False,
+        "rationale": (
+            "Deterministic fallback to the illustration plan after repeated "
+            "tool-contract failures; the independent reviewer must re-audit it."
+        ),
+    }
 
 
 def audit_visual_prompt(
@@ -553,6 +723,7 @@ def audit_visual_prompt(
         character_cards_text,
         state,
         max_attempts=max_agent_attempts,
+        fallback_candidate=_plan_fallback_candidate(normalized_plan, novel_text),
     )
 
     review = _chat_for_candidate(
@@ -572,6 +743,7 @@ def audit_visual_prompt(
         character_cards_text,
         state,
         max_attempts=max_agent_attempts,
+        fallback_candidate=primary,
     )
 
     primary_exclusion_keys = {item.casefold() for item in primary["excluded_nonliteral_entities"]}
@@ -615,6 +787,7 @@ def audit_visual_prompt(
             state,
             inherited_exclusions=consensus_exclusions,
             max_attempts=max_agent_attempts,
+            fallback_candidate=review,
         )
         final = adjudication
         decision_chain.append({"stage": "final_adjudication", **adjudication})
@@ -652,8 +825,15 @@ def audit_visual_prompts(
     checkpoint_path: Path | str | None = DEFAULT_CHECKPOINT_PATH,
     resume: bool = True,
     max_agent_attempts: int = 3,
+    on_completed: Optional[Callable[[int, dict[str, Any]], None]] = None,
 ) -> list[dict[str, Any]]:
-    """Audit plans in order, atomically checkpointing each completed item."""
+    """Audit plans in order, atomically checkpointing each completed item.
+
+    ``on_completed`` is invoked only after the corresponding result is safely
+    available (loaded from a compatible checkpoint or atomically persisted).
+    Consumers can therefore start downstream work immediately without waiting
+    for the complete batch.
+    """
     plans = list(plans)
     if not isinstance(novel_text, str) or not novel_text.splitlines():
         raise ValueError("novel_text must contain at least one source line")
@@ -687,6 +867,10 @@ def audit_visual_prompts(
                 logger.warning("Ignoring incompatible visual prompt checkpoint: %s", checkpoint)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             logger.warning("Ignoring invalid visual prompt checkpoint: %s", checkpoint)
+
+    if on_completed:
+        for index in sorted(completed):
+            on_completed(index, completed[index])
 
     for index, plan in enumerate(normalized_plans):
         if index in completed:
@@ -730,6 +914,8 @@ def audit_visual_prompts(
                     _add_usage(resumed_usage, _usage_delta(client, usage_at_start)),
                 ),
             )
+        if on_completed:
+            on_completed(index, completed[index])
     return [completed[index] for index in range(len(normalized_plans))]
 
 
