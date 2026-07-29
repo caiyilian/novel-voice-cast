@@ -64,6 +64,7 @@ from app.core.tts_quality import (
     split_tts_text,
 )
 from pydub import AudioSegment
+from scripts.desktop_events import DesktopEventEmitter, DesktopEventLoggingHandler
 
 
 STAGES = (
@@ -84,6 +85,24 @@ STAGES = (
 
 NARRATOR_SPEAKER = "旁白"
 
+STAGE_OPERATIONS = {
+    "parse": "正在解析小说与角色标注",
+    "gender": "正在识别角色性别",
+    "emotion": "正在标注逐句情绪",
+    "performance": "正在生成角色档案与逐句表演指导",
+    "tts": "正在用 VoxCPM 生成语音",
+    "splice": "正在拼接完整语音",
+    "bgm-segment": "正在划分 BGM 场景",
+    "bgm-label": "正在标注 BGM 类型与提示词",
+    "bgm-generate": "正在生成 BGM 音频",
+    "bgm-mix": "正在混合语音与 BGM",
+    "illustration-plan": "正在规划插图",
+    "illustrations": "正在审核提示词并生成插图",
+    "video": "正在生成字幕与横竖版视频",
+}
+
+DESKTOP_EVENTS = DesktopEventEmitter()
+
 
 class PipelineError(RuntimeError):
     """A stage failed or produced an invalid artifact."""
@@ -101,10 +120,16 @@ def resolve_path(value: str | os.PathLike[str], base: Path = ROOT) -> Path:
 def configure_logging(path: str = "logs/run_full.log") -> None:
     log_path = resolve_path(path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    handlers: list[logging.Handler] = [
+        logging.StreamHandler(),
+        logging.FileHandler(log_path, encoding="utf-8"),
+    ]
+    if DESKTOP_EVENTS.enabled:
+        handlers.append(DesktopEventLoggingHandler(DESKTOP_EVENTS))
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        handlers=[logging.StreamHandler(), logging.FileHandler(log_path, encoding="utf-8")],
+        handlers=handlers,
         force=True,
     )
 
@@ -115,6 +140,22 @@ def load_config(config_path: str) -> dict[str, Any]:
         config = yaml.safe_load(handle) or {}
     config["_config_path"] = str(path)
     config.setdefault("output", {})["dir"] = str(resolve_path(config.get("output", {}).get("dir", "output")))
+    return config
+
+
+def apply_input_overrides(
+    config: dict[str, Any],
+    *,
+    novel_path: str | None = None,
+    labels_path: str | None = None,
+) -> dict[str, Any]:
+    """Override this run's inputs in memory without modifying the YAML file."""
+
+    novel = config.setdefault("novel", {})
+    if novel_path:
+        novel["text_path"] = str(resolve_path(novel_path))
+    if labels_path:
+        novel["labels_path"] = str(resolve_path(labels_path))
     return config
 
 
@@ -431,24 +472,94 @@ def execute_stage(
     function: Callable[[], Any],
     artifacts: Callable[[Any], Iterable[Path | str]] | Iterable[Path | str] = (),
 ) -> Any:
-    print(f"\n[{STAGES.index(stage) + 1}/{len(STAGES)}] {stage}")
+    stage_index = STAGES.index(stage) + 1
+    operation = STAGE_OPERATIONS[stage]
+    print(f"\n[{stage_index}/{len(STAGES)}] {stage}")
+    DESKTOP_EVENTS.stage(
+        stage,
+        index=stage_index,
+        total=len(STAGES),
+        status="running",
+        operation=operation,
+    )
+    DESKTOP_EVENTS.progress(
+        stage,
+        current=0,
+        total=1,
+        operation=operation,
+    )
     started = time.monotonic()
     try:
         result = function()
-        produced = artifacts(result) if callable(artifacts) else artifacts
-        recorder.record(stage, "complete", time.monotonic() - started, produced)
+        produced = tuple(artifacts(result) if callable(artifacts) else artifacts)
+        elapsed = time.monotonic() - started
+        recorder.record(stage, "complete", elapsed, produced)
+        DESKTOP_EVENTS.progress(
+            stage,
+            current=1,
+            total=1,
+            operation=f"{operation}完成",
+            status="complete",
+        )
+        DESKTOP_EVENTS.stage(
+            stage,
+            index=stage_index,
+            total=len(STAGES),
+            status="complete",
+            elapsed_seconds=elapsed,
+            operation=f"{operation}完成",
+            artifacts=[str(item) for item in produced],
+        )
         return result
     except KeyboardInterrupt:
-        recorder.record(stage, "interrupted", time.monotonic() - started, error="interrupted by user")
+        elapsed = time.monotonic() - started
+        error = "interrupted by user"
+        recorder.record(stage, "interrupted", elapsed, error=error)
+        DESKTOP_EVENTS.stage(
+            stage,
+            index=stage_index,
+            total=len(STAGES),
+            status="interrupted",
+            elapsed_seconds=elapsed,
+            operation=f"{operation}已停止",
+            error=error,
+        )
         raise
     except Exception as exc:
-        recorder.record(stage, "failed", time.monotonic() - started, error=str(exc))
+        elapsed = time.monotonic() - started
+        DESKTOP_EVENTS.log("ERROR", str(exc), stage=stage)
+        recorder.record(stage, "failed", elapsed, error=str(exc))
+        DESKTOP_EVENTS.stage(
+            stage,
+            index=stage_index,
+            total=len(STAGES),
+            status="failed",
+            elapsed_seconds=elapsed,
+            operation=f"{operation}失败",
+            error=str(exc),
+        )
         raise
 
 
 def record_skipped(recorder: PipelineRecorder, stage: str, reason: str) -> None:
-    print(f"\n[{STAGES.index(stage) + 1}/{len(STAGES)}] {stage}: skipped ({reason})")
+    stage_index = STAGES.index(stage) + 1
+    print(f"\n[{stage_index}/{len(STAGES)}] {stage}: skipped ({reason})")
     recorder.record(stage, "skipped", 0.0, error=reason)
+    DESKTOP_EVENTS.progress(
+        stage,
+        current=1,
+        total=1,
+        operation=f"已跳过：{reason}",
+        status="skipped",
+    )
+    DESKTOP_EVENTS.stage(
+        stage,
+        index=stage_index,
+        total=len(STAGES),
+        status="skipped",
+        operation=f"已跳过：{reason}",
+        error=reason,
+    )
 
 
 def step_parse(config: dict[str, Any]) -> tuple[list[dict], list[str], str]:
@@ -462,6 +573,11 @@ def step_parse(config: dict[str, Any]) -> tuple[list[dict], list[str], str]:
     if not dialogues:
         raise PipelineError("Parser produced no dialogue segments")
     print(f"  parsed {len(dialogues)} dialogues and {len(characters)} characters")
+    DESKTOP_EVENTS.log(
+        "INFO",
+        f"解析完成：{len(dialogues)} 个语音片段，{len(characters)} 个角色",
+        stage="parse",
+    )
     return dialogues, characters, novel_text
 
 
@@ -3438,6 +3554,8 @@ def stop_streaming_tts_worker(process: subprocess.Popen | None) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Novel Voice Cast full pipeline")
     parser.add_argument("--config", default="config/config.yaml", help="Configuration file")
+    parser.add_argument("--novel", help="Override novel.text_path for this run only")
+    parser.add_argument("--labels", help="Override novel.labels_path for this run only")
     parser.add_argument("--limit", type=int, default=0, help="Only process the first N dialogues")
     parser.add_argument("--range", dest="range_value", default="", help="Dialogue range, e.g. 100-200")
     parser.add_argument("--log", default="logs/run_full.log", help="UTF-8 runtime log path")
@@ -3449,19 +3567,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run resumable VoxCPM synthesis concurrently with performance direction",
     )
     parser.add_argument("--dry-run", action="store_true", help="Validate stage range and caches without executing")
+    parser.add_argument(
+        "--desktop-events",
+        action="store_true",
+        help="Emit versioned [STAGE], [PROGRESS], and [LOG] JSON lines",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    effective_argv = list(argv) if argv is not None else sys.argv[1:]
+    display_command = subprocess.list2cmdline(
+        [sys.executable, "-u", str(Path(__file__).resolve()), *effective_argv]
+    )
+    DESKTOP_EVENTS.configure(args.desktop_events, stream=sys.stdout, command=display_command)
     configure_logging(args.log)
     try:
         selected = stage_slice(args.from_stage, args.to_stage)
-        config = load_config(args.config)
+        config = apply_input_overrides(
+            load_config(args.config),
+            novel_path=args.novel,
+            labels_path=args.labels,
+        )
     except KeyboardInterrupt:
+        DESKTOP_EVENTS.log("WARNING", "启动阶段已被用户中断")
         print("\nStartup interrupted.", file=sys.stderr)
         return 130
     except Exception as exc:
+        DESKTOP_EVENTS.log("ERROR", f"启动失败：{exc}")
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
@@ -3470,6 +3604,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Root: {ROOT}")
     print(f"Stages: {selected[0]} -> {selected[-1]}")
     print("=" * 72)
+    DESKTOP_EVENTS.log(
+        "INFO",
+        f"流水线启动：{selected[0]} -> {selected[-1]}",
+    )
     if args.dry_run:
         return 0 if dry_run_report(config, selected) else 1
 
@@ -3733,6 +3871,7 @@ def main(argv: list[str] | None = None) -> int:
         recorder.data["run_error"] = "interrupted by user"
         recorder.data["run_finished_at"] = utc_now()
         recorder.save()
+        DESKTOP_EVENTS.log("WARNING", "流水线已停止，已完成的断点得到保留")
         print("\nPipeline interrupted; completed checkpoints were preserved.", file=sys.stderr)
         print(f"Run manifest: {recorder.path}")
         return 130
@@ -3742,6 +3881,7 @@ def main(argv: list[str] | None = None) -> int:
         recorder.data["run_error"] = str(exc)
         recorder.data["run_finished_at"] = utc_now()
         recorder.save()
+        DESKTOP_EVENTS.log("ERROR", f"流水线失败：{exc}")
         print("\n" + "=" * 72)
         print(f"PIPELINE FAILED: {exc}", file=sys.stderr)
         print(f"Run manifest: {recorder.path}")
@@ -3749,6 +3889,10 @@ def main(argv: list[str] | None = None) -> int:
 
     stop_streaming_tts_worker(streaming_tts_process)
     recorder.finish()
+    DESKTOP_EVENTS.log(
+        "INFO",
+        f"流水线完成，总耗时 {format_time(time.monotonic() - total_started)}",
+    )
     print("\n" + "=" * 72)
     print(f"Pipeline complete in {format_time(time.monotonic() - total_started)}")
     print(f"Run manifest: {recorder.path}")
