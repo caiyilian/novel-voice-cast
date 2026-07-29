@@ -1,63 +1,178 @@
+import { createSignal, For, Show } from "solid-js"
+import type { InputKind, TextFileSelection } from "../preload/types"
+import {
+  applySelection,
+  clearSelection,
+  emptyInputState,
+  formatFileSize,
+  inputsReady,
+} from "./input-state"
+
 export const stages = [
-  "解析",
-  "性别",
-  "情绪",
-  "表演",
-  "语音",
-  "拼接",
-  "BGM 分割",
-  "BGM 标注",
-  "BGM 生成",
-  "BGM 混音",
-  "插图规划",
-  "插图生成",
-  "视频",
+  "解析", "性别", "情绪", "表演", "语音", "拼接", "BGM 分割",
+  "BGM 标注", "BGM 生成", "BGM 混音", "插图规划", "插图生成", "视频",
 ]
 
+const inputCopy: Record<InputKind, { title: string; hint: string }> = {
+  novel: { title: "小说原文", hint: "novel.txt · UTF-8 小说正文" },
+  labels: { title: "角色标注", hint: "labels.txt · 对话角色逐行标注" },
+}
+
 export function App() {
+  const [inputs, setInputs] = createSignal(emptyInputState())
+  const [dragging, setDragging] = createSignal<InputKind | null>(null)
+
+  const storeSelection = (inputKind: InputKind, selection: TextFileSelection | null) => {
+    setInputs((current) => applySelection(current, inputKind, selection))
+  }
+
+  const pick = async (inputKind: InputKind) => {
+    try {
+      storeSelection(inputKind, await window.novelVoiceCast.pickTextFile(inputKind))
+    } catch (error) {
+      storeSelection(inputKind, {
+        ok: false,
+        error: error instanceof Error ? error.message : "文件选择失败",
+      })
+    }
+  }
+
+  const drop = async (event: DragEvent, inputKind: InputKind) => {
+    event.preventDefault()
+    setDragging(null)
+    const file = event.dataTransfer?.files.item(0)
+    if (!file) return
+    try {
+      storeSelection(
+        inputKind,
+        await window.novelVoiceCast.acceptDroppedTextFile(file, inputKind),
+      )
+    } catch (error) {
+      storeSelection(inputKind, {
+        ok: false,
+        error: error instanceof Error ? error.message : "拖放文件读取失败",
+      })
+    }
+  }
+
   return (
-    <main class="min-h-screen bg-slate-950 px-8 py-10 text-slate-100">
+    <main class="min-h-screen bg-slate-950 px-6 py-8 text-slate-100 lg:px-10">
       <section class="mx-auto max-w-6xl overflow-hidden rounded-3xl border border-white/10 bg-slate-900/85 shadow-2xl shadow-black/40">
         <header class="border-b border-white/10 px-8 py-7">
           <p class="text-xs font-semibold tracking-[0.28em] text-amber-300">NOVEL VOICE CAST</p>
-          <h1 class="mt-2 text-3xl font-semibold tracking-tight">把小说变成完整的有声插图视频</h1>
+          <h1 class="mt-2 text-3xl font-semibold tracking-tight">一键生成完整有声插图视频</h1>
           <p class="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
-            桌面控制台已就绪。下一步将接入小说与角色标注选择、13 阶段实时进度、停止与断点继续。
+            先选择小说原文和角色标注。两份文件都通过检查后，才能启动 13 阶段流水线。
           </p>
         </header>
 
-        <div class="grid gap-6 p-8 lg:grid-cols-[1.35fr_0.65fr]">
-          <section class="rounded-2xl border border-dashed border-slate-600 bg-slate-950/45 p-6">
-            <h2 class="text-lg font-medium">运行输入</h2>
-            <div class="mt-5 grid gap-4 sm:grid-cols-2">
-              <div class="rounded-xl border border-white/10 bg-white/5 p-5">
-                <p class="text-sm font-medium">小说原文</p>
-                <p class="mt-2 text-xs text-slate-500">等待选择 novel.txt</p>
-              </div>
-              <div class="rounded-xl border border-white/10 bg-white/5 p-5">
-                <p class="text-sm font-medium">角色标注</p>
-                <p class="mt-2 text-xs text-slate-500">等待选择 labels.txt</p>
-              </div>
-            </div>
+        <div class="p-8">
+          <section class="grid gap-5 md:grid-cols-2">
+            <For each={["novel", "labels"] as InputKind[]}>
+              {(inputKind) => {
+                const slot = () => inputs()[inputKind]
+                const copy = inputCopy[inputKind]
+                return (
+                  <article
+                    class={`relative min-h-56 rounded-2xl border p-6 transition ${
+                      dragging() === inputKind
+                        ? "border-amber-300 bg-amber-300/10"
+                        : slot().file
+                          ? "border-emerald-400/50 bg-emerald-400/[0.06]"
+                          : "border-dashed border-slate-600 bg-slate-950/45"
+                    }`}
+                    onDragOver={(event) => {
+                      event.preventDefault()
+                      setDragging(inputKind)
+                    }}
+                    onDragLeave={() => setDragging(null)}
+                    onDrop={(event) => void drop(event, inputKind)}
+                  >
+                    <div class="flex items-start justify-between gap-4">
+                      <div>
+                        <p class="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
+                          必填输入
+                        </p>
+                        <h2 class="mt-2 text-lg font-medium">{copy.title}</h2>
+                      </div>
+                      <button
+                        type="button"
+                        aria-label={`选择${copy.title}`}
+                        class="grid size-11 shrink-0 place-items-center rounded-full border border-white/15 bg-white/[0.06] text-2xl text-amber-200 transition hover:border-amber-300 hover:bg-amber-300/10"
+                        onClick={() => void pick(inputKind)}
+                      >
+                        +
+                      </button>
+                    </div>
+
+                    <Show
+                      when={slot().file}
+                      fallback={
+                        <div class="mt-9 text-center">
+                          <p class="text-sm text-slate-300">拖入文件，或点击右上角“+”选择</p>
+                          <p class="mt-2 text-xs text-slate-500">{copy.hint}</p>
+                        </div>
+                      }
+                    >
+                      {(file) => (
+                        <div class="mt-6 rounded-xl border border-white/10 bg-black/20 p-4">
+                          <div class="flex items-start justify-between gap-4">
+                            <div class="min-w-0">
+                              <p class="truncate text-sm font-medium text-emerald-200" title={file().name}>
+                                {file().name}
+                              </p>
+                              <p class="mt-1 text-xs text-slate-500">{formatFileSize(file().size)} · 已通过检查</p>
+                            </div>
+                            <button
+                              type="button"
+                              class="text-xs text-slate-400 underline decoration-slate-600 underline-offset-4 hover:text-white"
+                              onClick={() => setInputs((current) => clearSelection(current, inputKind))}
+                            >
+                              清除
+                            </button>
+                          </div>
+                          <p class="mt-3 break-all font-mono text-[11px] leading-5 text-slate-500" title={file().path}>
+                            {file().path}
+                          </p>
+                        </div>
+                      )}
+                    </Show>
+
+                    <Show when={slot().error}>
+                      <p role="alert" class="mt-4 rounded-lg bg-rose-400/10 px-3 py-2 text-xs text-rose-300">
+                        {slot().error}
+                      </p>
+                    </Show>
+                  </article>
+                )
+              }}
+            </For>
           </section>
 
-          <aside class="rounded-2xl border border-white/10 bg-slate-950/45 p-6">
-            <p class="text-sm font-medium">安全运行环境</p>
-            <dl class="mt-4 space-y-3 text-xs text-slate-400">
-              <div class="flex justify-between gap-4"><dt>渲染进程隔离</dt><dd class="text-emerald-300">已启用</dd></div>
-              <div class="flex justify-between gap-4"><dt>Node 集成</dt><dd class="text-emerald-300">已禁用</dd></div>
-              <div class="flex justify-between gap-4"><dt>Electron</dt><dd>{window.novelVoiceCast?.versions.electron ?? "测试环境"}</dd></div>
-            </dl>
-          </aside>
+          <div class="mt-7 flex flex-col gap-4 rounded-2xl border border-white/10 bg-slate-950/45 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p class="text-sm font-medium">{inputsReady(inputs()) ? "输入已就绪" : "等待两份有效输入"}</p>
+              <p class="mt-1 text-xs text-slate-500">运行期间不会改写原小说、角色标注或 config.yaml。</p>
+            </div>
+            <button
+              type="button"
+              disabled={!inputsReady(inputs())}
+              class="rounded-xl bg-amber-300 px-6 py-3 text-sm font-semibold text-slate-950 transition enabled:hover:bg-amber-200 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+            >
+              开始完整流程
+            </button>
+          </div>
         </div>
 
         <footer class="border-t border-white/10 px-8 py-6">
           <ol class="grid grid-cols-2 gap-2 text-xs text-slate-500 sm:grid-cols-4 lg:grid-cols-7">
-            {stages.map((stage, index) => (
-              <li class="rounded-lg bg-white/[0.035] px-3 py-2">
-                <span class="mr-2 text-slate-600">{index + 1}</span>{stage}
-              </li>
-            ))}
+            <For each={stages}>
+              {(stage, index) => (
+                <li class="rounded-lg bg-white/[0.035] px-3 py-2">
+                  <span class="mr-2 text-slate-600">{index() + 1}</span>{stage}
+                </li>
+              )}
+            </For>
           </ol>
         </footer>
       </section>
