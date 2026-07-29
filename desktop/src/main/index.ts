@@ -1,5 +1,6 @@
 import { join } from "node:path"
 import { app, BrowserWindow, session } from "electron"
+import { registerIpcHandlers } from "./ipc"
 import { allowedRendererUrl, createWindowOptions } from "./window-options"
 
 let mainWindow: BrowserWindow | null = null
@@ -31,6 +32,7 @@ export function createMainWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  registerIpcHandlers()
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false)
   })
