@@ -5,7 +5,7 @@ novel:
   text_path: "novels/novel.txt"        # 小说文本路径
   labels_path: "novels/labels.txt"     # 角色标注路径
 
-# Issue #99 LLM stages use the six keys in config/sensenova_apikeys.
+# Issue #99 LLM stages use every non-empty key in config/sensenova_apikeys.
 # Gender, emotion, and BGM are pinned to SenseNova Flash Lite with no fallback.
 llm:
   provider: "sensenova"
