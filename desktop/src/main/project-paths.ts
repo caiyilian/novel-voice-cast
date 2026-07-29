@@ -51,7 +51,11 @@ function configuredOutputDirectory(configPath: string, root: string): string {
   return resolve(root, "output")
 }
 
-export function resolveProjectPaths(explicitRoot?: string, configOverride?: string): ProjectPaths {
+export function resolveProjectPaths(
+  explicitRoot?: string,
+  configOverride?: string,
+  pythonOverride?: string,
+): ProjectPaths {
   const candidates = [
     explicitRoot,
     process.env.NOVEL_VOICE_CAST_ROOT,
@@ -65,10 +69,9 @@ export function resolveProjectPaths(explicitRoot?: string, configOverride?: stri
     )
   }
 
-  const python = resolve(
-    root,
-    process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python",
-  )
+  const python = pythonOverride
+    ? resolve(pythonOverride)
+    : resolve(root, process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python")
   const runFull = resolve(root, "scripts/run_full.py")
   const config = configOverride
     ? isAbsolute(configOverride)
