@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { render } from "solid-js/web"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import type { NovelVoiceCastAPI, SelectedTextFile } from "../src/preload/types"
+import type {
+  NovelVoiceCastAPI,
+  PipelineSnapshot,
+  SelectedTextFile,
+} from "../src/preload/types"
 import { App, stages } from "../src/renderer/App"
 
 let dispose: (() => void) | undefined
@@ -21,6 +25,21 @@ function file(name: string): SelectedTextFile {
   }
 }
 
+const idlePipeline: PipelineSnapshot = {
+  status: "idle",
+  pid: null,
+  command: "",
+  projectRoot: "",
+  outputDirectory: "",
+  manifestPath: "",
+  logPath: "",
+  startedAt: null,
+  finishedAt: null,
+  exitCode: null,
+  error: null,
+  request: null,
+}
+
 describe("desktop input shell", () => {
   it("shows all stages and only enables start after both pickers succeed", async () => {
     const api: NovelVoiceCastAPI = {
@@ -31,6 +50,15 @@ describe("desktop input shell", () => {
         file: file(kind === "novel" ? "novel.txt" : "labels.txt"),
       })),
       acceptDroppedTextFile: vi.fn(),
+      getPipelineState: vi.fn(async () => idlePipeline),
+      startPipeline: vi.fn(async (request) => ({
+        ...idlePipeline,
+        status: "running" as const,
+        pid: 1234,
+        request,
+      })),
+      stopPipeline: vi.fn(async () => ({ ...idlePipeline, status: "stopping" as const })),
+      onPipelineEvent: vi.fn(() => () => undefined),
     }
     Object.defineProperty(window, "novelVoiceCast", { value: api, configurable: true })
     const container = document.createElement("div")
@@ -53,5 +81,20 @@ describe("desktop input shell", () => {
     expect(start?.disabled).toBe(false)
     expect(container.textContent).toContain("labels.txt")
     expect(api.pickTextFile).toHaveBeenCalledTimes(2)
+
+    start?.click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(api.startPipeline).toHaveBeenCalledWith({
+      novelPath: "E:/测试 输入/novel.txt",
+      labelsPath: "E:/测试 输入/labels.txt",
+    })
+    const stop = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("停止并保留断点"),
+    )
+    expect(stop).toBeTruthy()
+    stop?.click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(api.stopPipeline).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain("正在停止")
   })
 })
