@@ -9,6 +9,8 @@ env/
 # Node
 node_modules/
 dist/
+desktop/out/
+desktop/release/
 
 # IDE
 .vscode/
