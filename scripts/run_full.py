@@ -150,6 +150,139 @@ class StopFileWatcher:
             self._thread.join(timeout=max(1.0, self.poll_seconds * 2))
 
 
+class StageProgressMonitor:
+    """Poll atomically-written checkpoints while a long stage is blocking."""
+
+    def __init__(
+        self,
+        stage: str,
+        probe: Callable[[], tuple[int, int, str] | None],
+        *,
+        interval_seconds: float = 1.0,
+    ):
+        self.stage = stage
+        self.probe = probe
+        self.interval_seconds = max(0.1, float(interval_seconds))
+        self._stopped = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        def watch() -> None:
+            last_value: tuple[int, int, str] | None = None
+            while not self._stopped.is_set():
+                try:
+                    value = self.probe()
+                    if value is not None and value != last_value:
+                        current, total, operation = value
+                        DESKTOP_EVENTS.progress(
+                            self.stage,
+                            current=max(0, current),
+                            total=max(1, total),
+                            operation=operation,
+                        )
+                        last_value = value
+                except Exception:
+                    pass
+                self._stopped.wait(self.interval_seconds)
+
+        self._thread = threading.Thread(
+            target=watch,
+            name=f"desktop-progress-{self.stage}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stopped.set()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=max(1.0, self.interval_seconds * 2))
+
+
+def _collection_count(value: Any) -> int:
+    if isinstance(value, (dict, list, tuple, set)):
+        return len(value)
+    return 0
+
+
+def checkpoint_progress_probe(
+    entries: Iterable[tuple[Path, str, int]],
+    operation: str,
+) -> Callable[[], tuple[int, int, str]]:
+    values = tuple(entries)
+
+    def probe() -> tuple[int, int, str]:
+        completed = 0
+        total = 0
+        for path, key, expected in values:
+            payload = read_json(path, {})
+            current = _collection_count(payload.get(key)) if isinstance(payload, dict) else 0
+            completed += min(max(0, expected), current)
+            total += max(0, expected)
+        return completed, max(1, total), f"{operation}：{completed}/{max(1, total)}"
+
+    return probe
+
+
+def tts_progress_probe(
+    config: dict[str, Any],
+    total: int,
+) -> Callable[[], tuple[int, int, str]]:
+    checkpoint = streaming_tts_checkpoint_path(config)
+    directory = output_dir(config) / "segments"
+
+    def probe() -> tuple[int, int, str]:
+        payload = read_json(checkpoint, {})
+        checkpoint_count = (
+            _collection_count(payload.get("segments")) if isinstance(payload, dict) else 0
+        )
+        wav_count = sum(1 for path in directory.glob("*.wav") if nonempty_file(path))
+        completed = min(total, max(checkpoint_count, wav_count))
+        return completed, max(1, total), f"已生成语音：{completed}/{max(1, total)}"
+
+    return probe
+
+
+def bgm_generation_progress_probe(
+    config: dict[str, Any],
+    segment_count: int,
+) -> Callable[[], tuple[int, int, str]]:
+    manifest = output_dir(config) / "bgm/bgm_manifest.json"
+    total = segment_count * int(config.get("bgm", {}).get("clips_per_segment", 3))
+
+    def probe() -> tuple[int, int, str]:
+        completed = min(total, _bgm_checkpoint_clip_count(manifest))
+        return completed, max(1, total), f"已生成 BGM：{completed}/{max(1, total)}"
+
+    return probe
+
+
+def illustration_progress_probe(
+    config: dict[str, Any],
+    plan_count: int,
+) -> Callable[[], tuple[int, int, str]]:
+    variants = illustration_variant_specs(config)
+    audit_path = visual_prompt_checkpoint_path(config)
+    total = plan_count * (1 + len(variants))
+
+    def probe() -> tuple[int, int, str]:
+        audit = read_json(audit_path, {})
+        completed = min(
+            plan_count,
+            _collection_count(audit.get("completed_indices")) if isinstance(audit, dict) else 0,
+        )
+        for variant in variants:
+            checkpoint = read_json(variant["checkpoint"], {})
+            completed += min(
+                plan_count,
+                _collection_count(checkpoint.get("images"))
+                if isinstance(checkpoint, dict)
+                else 0,
+            )
+        return completed, max(1, total), f"提示词审核与生图：{completed}/{max(1, total)}"
+
+    return probe
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -513,6 +646,7 @@ def execute_stage(
     stage: str,
     function: Callable[[], Any],
     artifacts: Callable[[Any], Iterable[Path | str]] | Iterable[Path | str] = (),
+    progress_probe: Callable[[], tuple[int, int, str] | None] | None = None,
 ) -> Any:
     stage_index = STAGES.index(stage) + 1
     operation = STAGE_OPERATIONS[stage]
@@ -530,9 +664,14 @@ def execute_stage(
         total=1,
         operation=operation,
     )
+    monitor = StageProgressMonitor(stage, progress_probe) if progress_probe else None
+    if monitor is not None:
+        monitor.start()
     started = time.monotonic()
     try:
         result = function()
+        if monitor is not None:
+            monitor.stop()
         produced = tuple(artifacts(result) if callable(artifacts) else artifacts)
         elapsed = time.monotonic() - started
         recorder.record(stage, "complete", elapsed, produced)
@@ -554,6 +693,8 @@ def execute_stage(
         )
         return result
     except KeyboardInterrupt:
+        if monitor is not None:
+            monitor.stop()
         elapsed = time.monotonic() - started
         error = "interrupted by user"
         recorder.record(stage, "interrupted", elapsed, error=error)
@@ -568,6 +709,8 @@ def execute_stage(
         )
         raise
     except Exception as exc:
+        if monitor is not None:
+            monitor.stop()
         elapsed = time.monotonic() - started
         DESKTOP_EVENTS.log("ERROR", str(exc), stage=stage)
         recorder.record(stage, "failed", elapsed, error=str(exc))
@@ -3691,11 +3834,16 @@ def main(argv: list[str] | None = None) -> int:
 
         if "gender" in selected:
             dialogues, characters, novel_text = ensure_parsed()
+            gender_total = len([name for name in characters if name != "旁白"])
             gender_results = execute_stage(
                 recorder,
                 "gender",
                 lambda: step_gender(config, characters, dialogues, novel_text),
                 [gender_result_path()],
+                progress_probe=checkpoint_progress_probe(
+                    [(ROOT / "backend/data/gender_results.checkpoint.json", "results", gender_total)],
+                    "已识别角色",
+                ),
             )
 
         if "emotion" in selected:
@@ -3704,6 +3852,12 @@ def main(argv: list[str] | None = None) -> int:
                 record_skipped(recorder, "emotion", "disabled in config")
             else:
                 dialogues, _, novel_text = ensure_parsed()
+                emotion_total = sum(
+                    1
+                    for dialogue in dialogues
+                    if dialogue.get("speaker")
+                    and dialogue.get("speaker") not in {"旁白", "narrator", "Narrator"}
+                )
                 emotion_results = execute_stage(
                     recorder,
                     "emotion",
@@ -3714,6 +3868,16 @@ def main(argv: list[str] | None = None) -> int:
                         force_reprocess=config.get("features", {}).get("force_reprocess", False),
                     ),
                     [emotion_result_path()],
+                    progress_probe=checkpoint_progress_probe(
+                        [
+                            (
+                                ROOT / "backend/data/emotion_results.checkpoint.json",
+                                "results",
+                                emotion_total,
+                            )
+                        ],
+                        "已标注情绪",
+                    ),
                 )
 
         if "performance" in selected:
@@ -3739,6 +3903,11 @@ def main(argv: list[str] | None = None) -> int:
                         limit=args.limit,
                         range_value=args.range_value,
                     )
+                performance_groups = _performance_groups(
+                    config,
+                    dialogues,
+                    gender_results or {},
+                )
                 performance_results = execute_stage(
                     recorder,
                     "performance",
@@ -3751,9 +3920,28 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                     [
                         path
-                        for group in _performance_groups(config, dialogues, gender_results or {})
+                        for group in performance_groups
                         for path in (group["profile_path"], group["output_path"])
                     ],
+                    progress_probe=checkpoint_progress_probe(
+                        [
+                            entry
+                            for group in performance_groups
+                            for entry in (
+                                (
+                                    group["profile_checkpoint"],
+                                    "completed_speakers",
+                                    len(group["speakers"]),
+                                ),
+                                (
+                                    group["direction_checkpoint"],
+                                    "completed_indices",
+                                    len(group["targets"]),
+                                ),
+                            )
+                        ],
+                        "角色档案与逐句导演",
+                    ),
                 )
 
         if "tts" in selected:
@@ -3799,6 +3987,7 @@ def main(argv: list[str] | None = None) -> int:
                     performance_results or {},
                 ),
                 [output_dir(config) / "segments", output_dir(config) / "segments/segments_manifest.json"],
+                progress_probe=tts_progress_probe(config, len(dialogues)),
             )
 
         if "splice" in selected:
@@ -3853,6 +4042,16 @@ def main(argv: list[str] | None = None) -> int:
                     "bgm-segment",
                     lambda: step_bgm_segmentation(config),
                     [bgm_segments_path(config)],
+                    progress_probe=checkpoint_progress_probe(
+                        [
+                            (
+                                ROOT / "backend/data/bgm_segmentation.checkpoint.json",
+                                "chunks",
+                                int(config.get("bgm", {}).get("segmentation_chunks", 6)),
+                            )
+                        ],
+                        "已复核章节块",
+                    ),
                 )
             if "bgm-label" in selected:
                 if bgm_segments is None:
@@ -3866,13 +4065,29 @@ def main(argv: list[str] | None = None) -> int:
                     "bgm-label",
                     lambda: step_bgm_labeling(config, bgm_segments or [], novel_text),
                     [bgm_segments_path(config)],
+                    progress_probe=checkpoint_progress_probe(
+                        [
+                            (
+                                ROOT / "backend/data/bgm_types.checkpoint.json",
+                                "results",
+                                len(bgm_segments or []),
+                            )
+                        ],
+                        "已标注音乐场景",
+                    ),
                 )
             if "bgm-generate" in selected:
+                if bgm_segments is None:
+                    path = bgm_segments_path(config)
+                    if not path.exists():
+                        raise PipelineError("BGM segmentation cache is required before BGM generation")
+                    bgm_segments = load_segments(path)
                 execute_stage(
                     recorder,
                     "bgm-generate",
                     lambda: step_bgm_generation(config),
                     lambda result: [result, output_dir(config) / "bgm"],
+                    progress_probe=bgm_generation_progress_probe(config, len(bgm_segments)),
                 )
             if "bgm-mix" in selected:
                 execute_stage(
@@ -3890,6 +4105,10 @@ def main(argv: list[str] | None = None) -> int:
                 lambda result: [result],
             )
         if "illustrations" in selected:
+            plan_path = illustration_plan_path(config)
+            if not plan_path.exists():
+                raise PipelineError("Illustration plan cache is required before illustration generation")
+            illustration_plan_count = len(load_illustration_plan(plan_path))
             execute_stage(
                 recorder,
                 "illustrations",
@@ -3903,6 +4122,7 @@ def main(argv: list[str] | None = None) -> int:
                     ],
                     visual_prompt_checkpoint_path(config),
                 ],
+                progress_probe=illustration_progress_probe(config, illustration_plan_count),
             )
         if "video" in selected:
             execute_stage(
