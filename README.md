@@ -20,6 +20,8 @@ config.yaml → scripts/run_full.py → 解析 → 性别识别 → 情感标注
 
 ## 快速开始
 
+从 `novel.txt + labels.txt` 配置模型并生成横竖版带 BGM、字幕、插图视频的完整说明，见 [`docs/全流程使用教程.md`](docs/全流程使用教程.md)。
+
 先用 dry-run 检查哪些阶段会命中缓存：
 
 ```cmd
