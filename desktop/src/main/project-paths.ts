@@ -1,5 +1,6 @@
-import { existsSync, statSync } from "node:fs"
+import { existsSync, readFileSync, statSync } from "node:fs"
 import { dirname, isAbsolute, resolve } from "node:path"
+import { parse } from "yaml"
 
 export interface ProjectPaths {
   root: string
@@ -27,6 +28,27 @@ function candidateRoot(start: string): string | null {
     current = parent
   }
   return null
+}
+
+function configuredOutputDirectory(configPath: string, root: string): string {
+  try {
+    const value = parse(readFileSync(configPath, "utf8")) as unknown
+    if (
+      value
+      && typeof value === "object"
+      && "output" in value
+      && value.output
+      && typeof value.output === "object"
+      && "dir" in value.output
+      && typeof value.output.dir === "string"
+      && value.output.dir.trim()
+    ) {
+      return isAbsolute(value.output.dir) ? resolve(value.output.dir) : resolve(root, value.output.dir)
+    }
+  } catch (error) {
+    throw new Error(`无法读取配置中的输出目录：${error instanceof Error ? error.message : String(error)}`)
+  }
+  return resolve(root, "output")
 }
 
 export function resolveProjectPaths(explicitRoot?: string, configOverride?: string): ProjectPaths {
@@ -62,7 +84,7 @@ export function resolveProjectPaths(explicitRoot?: string, configOverride?: stri
     python,
     runFull,
     config,
-    output: resolve(root, "output"),
+    output: configuredOutputDirectory(config, root),
     logs: resolve(root, "logs"),
   }
 }
