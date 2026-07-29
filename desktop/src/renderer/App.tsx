@@ -50,6 +50,11 @@ const idlePipeline: PipelineSnapshot = {
     elapsedSeconds: 0,
   })),
   logs: [],
+  totalElapsedSeconds: 0,
+  manifestStatus: "not-read",
+  manifestMessage: "尚未读取 manifest",
+  artifacts: [],
+  outputDirectoryAvailable: false,
 }
 
 const stageLabels: Record<PipelineStage, string> = Object.fromEntries(
@@ -72,6 +77,18 @@ function stageTone(status: keyof typeof stageStatusLabels): string {
   if (status === "failed") return "border-rose-400/50 bg-rose-400/[0.08] text-rose-200"
   if (status === "interrupted") return "border-orange-400/45 bg-orange-400/[0.07] text-orange-200"
   return "border-white/10 bg-white/[0.025] text-slate-400"
+}
+
+function formatDuration(seconds: number): string {
+  const rounded = Math.max(0, Math.round(seconds))
+  const hours = Math.floor(rounded / 3600)
+  const minutes = Math.floor((rounded % 3600) / 60)
+  const remainder = rounded % 60
+  return hours > 0
+    ? `${hours} 小时 ${minutes} 分 ${remainder} 秒`
+    : minutes > 0
+      ? `${minutes} 分 ${remainder} 秒`
+      : `${remainder} 秒`
 }
 
 export function App() {
@@ -160,6 +177,16 @@ export function App() {
       setPipeline(await window.novelVoiceCast.stopPipeline())
     } catch (error) {
       setRunError(error instanceof Error ? error.message : "停止请求失败")
+    }
+  }
+
+  const openOutputDirectory = async () => {
+    setRunError("")
+    try {
+      const result = await window.novelVoiceCast.openOutputDirectory()
+      if (!result.ok) setRunError(result.error || "无法打开输出目录")
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "无法打开输出目录")
     }
   }
 
@@ -407,6 +434,61 @@ export function App() {
               </Show>
             </div>
           </section>
+
+          <Show when={["completed", "failed", "interrupted"].includes(pipeline().status)}>
+            <section class="mt-5 rounded-2xl border border-white/10 bg-slate-950/45 p-5">
+              <div class="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p class="text-xs font-semibold tracking-[0.18em] text-sky-300">运行结果</p>
+                  <h2 class="mt-2 text-xl font-medium">
+                    {pipeline().status === "completed"
+                      ? "流水线已完成"
+                      : pipeline().status === "interrupted"
+                        ? "流水线已停止"
+                        : "流水线失败"}
+                  </h2>
+                  <p class="mt-2 text-sm text-slate-400">
+                    总耗时：{formatDuration(pipeline().totalElapsedSeconds)}
+                  </p>
+                  <p class={`mt-1 text-xs ${pipeline().manifestStatus === "valid" ? "text-emerald-300" : "text-rose-300"}`}>
+                    manifest：{pipeline().manifestMessage}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={!pipeline().outputDirectoryAvailable}
+                  class="rounded-xl border border-sky-300/35 bg-sky-300/10 px-5 py-3 text-sm text-sky-200 transition enabled:hover:bg-sky-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:text-slate-600"
+                  onClick={() => void openOutputDirectory()}
+                >
+                  打开输出目录
+                </button>
+              </div>
+              <p class="mt-4 break-all rounded-lg bg-black/20 px-3 py-2 font-mono text-[11px] text-slate-500">
+                {pipeline().outputDirectory || "输出目录尚不可用"}
+              </p>
+              <Show
+                when={pipeline().artifacts.length > 0}
+                fallback={<p class="mt-4 text-sm text-slate-500">本次 manifest 没有可展示的产物。</p>}
+              >
+                <ul class="mt-4 max-h-72 space-y-2 overflow-auto pr-1">
+                  <For each={pipeline().artifacts}>
+                    {(artifact) => (
+                      <li class="rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2">
+                        <div class="flex items-start gap-3">
+                          <span class={`mt-0.5 shrink-0 text-xs ${artifact.exists ? "text-emerald-300" : "text-rose-300"}`}>
+                            {artifact.exists ? "存在" : "缺失"}
+                          </span>
+                          <span class="min-w-0 break-all font-mono text-[11px] leading-5 text-slate-400">
+                            {artifact.path}
+                          </span>
+                        </div>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
+            </section>
+          </Show>
         </div>
 
         <footer class="border-t border-white/10 px-8 py-6">
@@ -422,6 +504,9 @@ export function App() {
                     <div class="h-full bg-current opacity-70" style={{ width: `${stage.percent}%` }} />
                   </div>
                   <p class="mt-1 text-[10px] opacity-60">{stage.percent.toFixed(0)}%</p>
+                  <Show when={stage.elapsedSeconds > 0}>
+                    <p class="mt-1 text-[10px] opacity-60">{formatDuration(stage.elapsedSeconds)}</p>
+                  </Show>
                 </li>
               )}
             </For>

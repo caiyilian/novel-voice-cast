@@ -20,6 +20,7 @@ import {
 } from "./pipeline-events"
 import { validateTextFile } from "./text-file"
 import { resolveProjectPaths, type ProjectPaths } from "./project-paths"
+import { readRunResult, requireOpenableDirectory } from "./run-result"
 
 const RUNNING_STATES = new Set(["starting", "running", "stopping"])
 
@@ -112,6 +113,11 @@ export class PipelineController {
     operation: "等待开始",
     stages: createStageRuntime(),
     logs: [],
+    totalElapsedSeconds: 0,
+    manifestStatus: "not-read",
+    manifestMessage: "尚未读取 manifest",
+    artifacts: [],
+    outputDirectoryAvailable: false,
   }
 
   constructor(options: PipelineControllerOptions = {}) {
@@ -124,6 +130,7 @@ export class PipelineController {
       request: this.snapshot.request ? { ...this.snapshot.request } : null,
       stages: this.snapshot.stages.map((stage) => ({ ...stage })),
       logs: this.snapshot.logs.map((entry) => ({ ...entry })),
+      artifacts: this.snapshot.artifacts.map((artifact) => ({ ...artifact })),
     }
   }
 
@@ -188,6 +195,11 @@ export class PipelineController {
       operation: "正在启动 Python 流水线",
       stages: createStageRuntime(normalizedRequest),
       logs: [],
+      totalElapsedSeconds: 0,
+      manifestStatus: "not-read",
+      manifestMessage: "等待 Python 流水线写入 manifest",
+      artifacts: [],
+      outputDirectoryAvailable: false,
     })
 
     try {
@@ -211,7 +223,7 @@ export class PipelineController {
       child.once("error", (error) => {
         this.update({ status: "failed", error: error.message, finishedAt: new Date().toISOString() })
       })
-      child.once("close", (code) => this.onClose(code))
+      child.once("close", (code) => void this.onClose(code))
       this.update({ status: "running", pid: child.pid ?? null })
       return this.getState()
     } catch (error) {
@@ -234,6 +246,10 @@ export class PipelineController {
       this.stopTimer.unref()
     }
     return this.getState()
+  }
+
+  async getOpenableOutputDirectory(): Promise<string> {
+    return requireOpenableDirectory(this.snapshot.outputDirectory)
   }
 
   private consumeOutput(stream: "stdout" | "stderr", chunk: string): void {
@@ -276,28 +292,77 @@ export class PipelineController {
     }
   }
 
-  private onClose(code: number | null): void {
+  private async onClose(code: number | null): Promise<void> {
     this.flushOutput()
     if (this.stopTimer) clearTimeout(this.stopTimer)
     this.stopTimer = null
     const wasStopping = this.snapshot.status === "stopping"
     this.child = null
-    const status = wasStopping ? "interrupted" : code === 0 ? "completed" : "failed"
+    const startedAt = this.snapshot.startedAt
+    const request = this.snapshot.request
+    const result = startedAt && request
+      ? await readRunResult({
+          manifestPath: this.snapshot.manifestPath,
+          outputDirectory: this.snapshot.outputDirectory,
+          projectRoot: this.snapshot.projectRoot,
+          expectedStartedAt: startedAt,
+          request,
+        })
+      : {
+          manifestStatus: "invalid" as const,
+          manifestMessage: "控制器缺少本次运行的开始时间或请求",
+          runStatus: null,
+          runError: null,
+          totalElapsedSeconds: 0,
+          stages: [],
+          artifacts: [],
+        }
+    const manifestComplete = result.manifestStatus === "valid" && result.runStatus === "complete"
+    const status = wasStopping ? "interrupted" : code === 0 && manifestComplete ? "completed" : "failed"
+    const manifestStages = new Map(result.stages.map((stage) => [stage.name, stage]))
+    const reconciledStages = this.snapshot.stages.map((stage) => {
+      const manifestStage = manifestStages.get(stage.name)
+      return manifestStage
+        ? {
+            ...stage,
+            status: manifestStage.status,
+            percent: manifestStage.status === "complete" || manifestStage.status === "skipped" ? 100 : stage.percent,
+            elapsedSeconds: manifestStage.elapsedSeconds,
+          }
+        : stage
+    })
     const terminalStageStatus: StageRuntimeStatus | null = (
       status === "interrupted" ? "interrupted" : status === "failed" ? "failed" : null
     )
     const stages = terminalStageStatus
-      ? this.snapshot.stages.map((stage) => (
+      ? reconciledStages.map((stage) => (
           stage.status === "running" ? { ...stage, status: terminalStageStatus } : stage
         ))
-      : this.snapshot.stages
+      : reconciledStages
+    const error = status === "failed"
+      ? result.manifestStatus !== "valid"
+        ? result.manifestMessage
+        : result.runError || `Python 流水线退出码：${code ?? "unknown"}；manifest 状态：${result.runStatus}`
+      : null
+    let outputDirectoryAvailable = false
+    try {
+      await requireOpenableDirectory(this.snapshot.outputDirectory)
+      outputDirectoryAvailable = true
+    } catch {
+      outputDirectoryAvailable = false
+    }
     this.update({
       status,
       stages,
       pid: null,
       exitCode: code,
       finishedAt: new Date().toISOString(),
-      error: status === "failed" ? `Python 流水线退出码：${code ?? "unknown"}` : null,
+      error,
+      totalElapsedSeconds: result.totalElapsedSeconds,
+      manifestStatus: result.manifestStatus,
+      manifestMessage: result.manifestMessage,
+      artifacts: result.artifacts,
+      outputDirectoryAvailable,
     })
     if (this.stopFile) void rm(this.stopFile, { force: true })
     this.stopFile = null
