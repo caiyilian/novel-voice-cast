@@ -15,8 +15,9 @@ import os
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 # ── Path setup: add ACE-Step project to sys.path ──────────────────────
 ACE_DIR = Path(__file__).resolve().parent.parent / "ACE-Step-1.5"
@@ -25,12 +26,15 @@ sys.path.insert(0, str(ACE_DIR))
 
 # ACE-Step SDK imports are lazy (inside _init_ace_step) so that dry-run
 # mode does not trigger CUDA initialisation.
-os.environ.setdefault("ACESTEP_CONFIG_PATH", "acestep-v15-sft")
+os.environ.setdefault("ACESTEP_CONFIG_PATH", "acestep-v15-turbo")
 os.environ.setdefault("ACESTEP_LM_MODEL_PATH", "acestep-5Hz-lm-1.7B")
 os.environ.setdefault("ACESTEP_DEVICE", "auto")
-os.environ.setdefault("ACESTEP_INIT_LLM", "true")
-os.environ.setdefault("ACESTEP_CPU_OFFLOAD", "true")
-os.environ.setdefault("ACESTEP_OFFLOAD_DIT_TO_CPU", "true")
+os.environ.setdefault("ACESTEP_INIT_LLM", "false")
+os.environ.setdefault("ACESTEP_CPU_OFFLOAD", "false")
+os.environ.setdefault("ACESTEP_OFFLOAD_DIT_TO_CPU", "false")
+
+BGM_PROCESS_RESTART_EXIT_CODE = 75
+DEFAULT_PROCESS_CLIP_LIMIT = 16
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -39,9 +43,55 @@ def _env_flag(name: str, default: bool) -> bool:
 
 
 def _resolve_offload_policy() -> tuple[bool, bool]:
-    cpu_offload = _env_flag("ACESTEP_CPU_OFFLOAD", True)
-    offload_dit = cpu_offload and _env_flag("ACESTEP_OFFLOAD_DIT_TO_CPU", True)
+    cpu_offload = _env_flag("ACESTEP_CPU_OFFLOAD", False)
+    offload_dit = cpu_offload and _env_flag("ACESTEP_OFFLOAD_DIT_TO_CPU", False)
     return cpu_offload, offload_dit
+
+
+def _install_model_offload_sync_guard(
+    handler: Any,
+    synchronize: Callable[[], None] | None = None,
+) -> bool:
+    """Synchronize CUDA work before and after moving DiT back to CPU.
+
+    ACE-Step decodes semantic audio codes inside a VAE residency context.  With
+    DiT offloading enabled this means the DiT is moved to CUDA, used by the
+    tokenizer/detokenizer, and immediately moved back to CPU while the VAE is
+    still resident.  CUDA kernels are asynchronous; on Windows the repeated
+    unsynchronized transition can terminate the process with 0xC0000005 rather
+    than raising a catchable Python exception.
+    """
+    if not (
+        getattr(handler, "offload_to_cpu", False)
+        and getattr(handler, "offload_dit_to_cpu", False)
+    ):
+        return False
+    if getattr(handler, "_novel_voice_cast_offload_sync_guard", False):
+        return True
+
+    if synchronize is None:
+        import torch
+
+        if not torch.cuda.is_available():
+            return False
+        synchronize = torch.cuda.synchronize
+
+    original_context = handler._load_model_context
+
+    @contextmanager
+    def synchronized_context(model_name: str):
+        with original_context(model_name):
+            try:
+                yield
+            finally:
+                if model_name == "model":
+                    synchronize()
+        if model_name == "model":
+            synchronize()
+
+    handler._load_model_context = synchronized_context
+    handler._novel_voice_cast_offload_sync_guard = True
+    return True
 
 
 def _init_ace_step(
@@ -71,8 +121,10 @@ def _init_ace_step(
     )
     if not success:
         raise RuntimeError(f"ACE-Step DiT initialization failed: {status}")
+    if _install_model_offload_sync_guard(dit_handler):
+        print("  CUDA synchronization guard enabled for DiT offload", flush=True)
 
-    if os.environ.get("ACESTEP_INIT_LLM", "true").lower() in {"0", "false", "no"}:
+    if os.environ.get("ACESTEP_INIT_LLM", "false").lower() in {"0", "false", "no"}:
         return dit_handler, None
     llm_handler = LLMHandler()
     status, success = llm_handler.initialize(
@@ -108,7 +160,50 @@ _DEFAULT_OUTPUT_DIR = str(PROJECT_ROOT / "output/bgm")
 
 # ── Defaults ──
 DEFAULT_DURATION = 60       # seconds per BGM clip
-DEFAULT_INFERENCE_STEPS = 50  # SFT quality model steps
+DEFAULT_INFERENCE_STEPS = 8  # turbo model's native step count
+MAX_NOISE_SPECTRAL_FLATNESS = 0.010
+MIN_NOISE_HARMONICITY_DB = 10.0
+
+
+def _music_quality_metrics(audio: Any, sample_rate: int) -> tuple[float, float]:
+    """Return low-band spectral flatness and harmonic/percussive balance.
+
+    The failed SFT+5Hz run produced broadband, footstep-like pulses that still
+    passed duration/RMS checks.  These two inexpensive measurements separate
+    that failure mode from the known-good turbo music while avoiding any
+    content-dependent genre classifier.
+    """
+    import numpy as np
+    from scipy.ndimage import median_filter
+    from scipy.signal import resample_poly, stft
+
+    samples = np.asarray(audio, dtype=np.float32)
+    mono = samples.mean(axis=1) if samples.ndim == 2 else samples.reshape(-1)
+    if sample_rate != 8_000:
+        mono = resample_poly(mono, 8_000, int(sample_rate))
+    _, _, spectrum = stft(
+        mono,
+        fs=8_000,
+        nperseg=1_024,
+        noverlap=768,
+        boundary=None,
+    )
+    magnitude = np.abs(spectrum).astype(np.float64) + 1e-10
+    power = np.square(magnitude) + 1e-12
+    frame_flatness = np.exp(np.mean(np.log(power), axis=0)) / np.mean(power, axis=0)
+    spectral_flatness = float(np.mean(frame_flatness))
+
+    harmonic = median_filter(magnitude, size=(1, 31), mode="nearest")
+    percussive = median_filter(magnitude, size=(31, 1), mode="nearest")
+    harmonic_power = np.square(harmonic)
+    percussive_power = np.square(percussive)
+    harmonic_mask = harmonic_power / (harmonic_power + percussive_power + 1e-12)
+    separated_harmonic = np.square(magnitude * harmonic_mask).sum()
+    separated_percussive = np.square(magnitude * (1.0 - harmonic_mask)).sum()
+    harmonicity_db = float(
+        10.0 * np.log10((separated_harmonic + 1e-10) / (separated_percussive + 1e-10))
+    )
+    return spectral_flatness, harmonicity_db
 
 
 def validate_generated_clip(path: Path, expected_duration: float) -> tuple[bool, str]:
@@ -130,7 +225,19 @@ def validate_generated_clip(path: Path, expected_duration: float) -> tuple[bool,
             return False, "audio contains non-finite samples"
         if rms < 0.001 or peak < 0.01:
             return False, f"audio is effectively silent (rms={rms:.6f}, peak={peak:.6f})"
-        return True, f"duration={duration:.2f}s rms={rms:.5f} peak={peak:.5f}"
+        flatness, harmonicity_db = _music_quality_metrics(audio, info.samplerate)
+        if (
+            flatness > MAX_NOISE_SPECTRAL_FLATNESS
+            and harmonicity_db < MIN_NOISE_HARMONICITY_DB
+        ):
+            return False, (
+                "audio is noise/percussion dominated "
+                f"(spectral_flatness={flatness:.5f}, harmonicity={harmonicity_db:.2f}dB)"
+            )
+        return True, (
+            f"duration={duration:.2f}s rms={rms:.5f} peak={peak:.5f} "
+            f"spectral_flatness={flatness:.5f} harmonicity={harmonicity_db:.2f}dB"
+        )
     except Exception as exc:
         return False, f"audio validation failed: {exc}"
 
@@ -244,18 +351,32 @@ def main() -> int:
     parser.add_argument(
         "--cpu-offload",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Offload VAE/text encoder between phases to preserve DiT inference VRAM",
+        default=False,
+        help="Offload models between phases (normally unnecessary for turbo on 12 GB VRAM)",
     )
     parser.add_argument(
         "--offload-dit",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Offload DiT before VAE decode (recommended for 12 GB GPUs with the vLLM backend)",
+        default=False,
+        help="Offload DiT before VAE decode (only useful with the optional semantic LM)",
     )
     parser.add_argument("--guidance-scale", type=float, default=7.0)
-    parser.add_argument("--no-thinking", action="store_true", help="Disable the 5Hz semantic LM")
+    parser.add_argument(
+        "--thinking",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable the experimental 5Hz semantic LM (disabled for stable BGM generation)",
+    )
     parser.add_argument("--clip-attempts", type=int, default=3, help="Quality retry count per clip")
+    parser.add_argument(
+        "--process-clip-limit",
+        type=int,
+        default=DEFAULT_PROCESS_CLIP_LIMIT,
+        help=(
+            "Checkpoint and request a clean process restart after this many newly generated clips "
+            f"(default: {DEFAULT_PROCESS_CLIP_LIMIT}; 0 disables)"
+        ),
+    )
     parser.add_argument("--proxy", default=os.environ.get("HTTPS_PROXY", "http://127.0.0.1:7890"))
     parser.add_argument("--force", action="store_true", help="Regenerate all clips even if cached")
     parser.add_argument("--dry-run", action="store_true", help="Print what would be generated, skip ACE-Step")
@@ -268,7 +389,7 @@ def main() -> int:
     output_dir = Path(args.output_dir).expanduser().resolve()
     manifest_path = output_dir / "bgm_manifest.json"
     clips_per_segment = args.clips_per_segment
-    thinking = not args.no_thinking
+    thinking = bool(args.thinking)
     if args.proxy:
         for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
             os.environ[name] = args.proxy
@@ -284,6 +405,7 @@ def main() -> int:
     print(f"Clips per segment: {clips_per_segment}")
     print(f"Quality model: {args.model} + {args.lm_model if thinking else 'no LM'}")
     print(f"Memory policy: cpu_offload={args.cpu_offload}, offload_dit={args.offload_dit}")
+    print(f"Process clip limit: {args.process_clip_limit or 'disabled'}")
 
     # ── Load segments ──
     if not segments_path.exists():
@@ -483,6 +605,18 @@ def main() -> int:
             completed_clips.sort(key=lambda item: item["clip_index"])
             manifest["generation_seconds"] = round(time.time() - start_time, 1)
             save_manifest(manifest, manifest_path)
+            if (
+                args.process_clip_limit > 0
+                and success_count >= args.process_clip_limit
+                and success_count < len(to_generate)
+            ):
+                remaining = len(to_generate) - success_count
+                print(
+                    f"\n[PROCESS RESTART] checkpointed {success_count} new clips; "
+                    f"{remaining} remain. Requesting a clean ACE-Step restart.",
+                    flush=True,
+                )
+                return BGM_PROCESS_RESTART_EXIT_CODE
         else:
             print(f"    [FAIL] [{time.time() - t1:.1f}s]")
 

@@ -43,6 +43,8 @@ OUTPUT_PATH = Path("output/illustration_video.mp4")
 NOVEL_PATH = Path("novels/novel.txt")
 LABELS_PATH = Path("novels/labels.txt")
 SUBTITLE_PATH = Path("output/_generated_subtitles.srt")
+DEFAULT_VIDEO_WIDTH = 896
+DEFAULT_VIDEO_HEIGHT = 1152
 
 
 def get_segment_duration(wav_path: Path) -> int:
@@ -127,17 +129,21 @@ def build_subtitle_filter(
     font_name: str = "SimHei",
     font_size: int = 20,
     fonts_dir: Path | None = None,
+    video_width: int = DEFAULT_VIDEO_WIDTH,
+    video_height: int = DEFAULT_VIDEO_HEIGHT,
 ) -> str:
     """Build a libass-backed subtitles filter with deterministic wrapping."""
 
     if font_size <= 0:
         raise ValueError("subtitle font size must be positive")
+    if video_width <= 0 or video_height <= 0:
+        raise ValueError("video dimensions must be positive")
     if any(char in font_name for char in ",:\r\n"):
         raise ValueError("subtitle font name cannot contain commas, colons, or newlines")
     style = ",".join(
         [
-            "PlayResX=896",
-            "PlayResY=1152",
+            f"PlayResX={video_width}",
+            f"PlayResY={video_height}",
             "WrapStyle=2",
             f"FontName={font_name}",
             f"FontSize={font_size}",
@@ -159,10 +165,20 @@ def build_subtitle_filter(
     return "subtitles=" + ":".join(options)
 
 
-def build_video_filter_chain(subtitle_filter: str | None = None) -> str:
+def build_video_filter_chain(
+    subtitle_filter: str | None = None,
+    *,
+    fps: int = 25,
+    video_width: int = DEFAULT_VIDEO_WIDTH,
+    video_height: int = DEFAULT_VIDEO_HEIGHT,
+) -> str:
     """Build the ordered filter chain required by the sparse slideshow input."""
 
-    filters = ["scale=896:1152", "fps=25"]
+    if fps <= 0:
+        raise ValueError("video fps must be positive")
+    if video_width <= 0 or video_height <= 0:
+        raise ValueError("video dimensions must be positive")
+    filters = [f"scale={video_width}:{video_height}", f"fps={fps}"]
     if subtitle_filter:
         # Expand the sparse slideshow before libass so cues can change while
         # one illustration remains visible.
@@ -241,6 +257,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             raise argparse.ArgumentTypeError("must be positive")
         return parsed
 
+    def video_size(value: str) -> tuple[int, int]:
+        try:
+            width_text, height_text = value.lower().split("x", 1)
+            width, height = int(width_text), int(height_text)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise argparse.ArgumentTypeError("size must use WIDTHxHEIGHT") from exc
+        if width <= 0 or height <= 0:
+            raise argparse.ArgumentTypeError("video dimensions must be positive")
+        return width, height
+
     parser = argparse.ArgumentParser(description="从插图和音频生成带中文字幕的视频")
     parser.add_argument("--plan", type=Path, default=PLAN_PATH, help="插图计划 JSON")
     parser.add_argument(
@@ -251,6 +277,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--audio", type=Path, default=AUDIO_PATH, help="最终混音音轨")
     parser.add_argument("--output", type=Path, default=OUTPUT_PATH, help="输出视频")
+    parser.add_argument(
+        "--size",
+        type=video_size,
+        default=(DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT),
+        help="输出画布 WIDTHxHEIGHT",
+    )
     parser.add_argument("--novel", type=Path, default=NOVEL_PATH, help="小说原文")
     parser.add_argument("--labels", type=Path, default=LABELS_PATH, help="说话人标注")
     parser.add_argument("--segments-dir", type=Path, default=SEGMENTS_DIR, help="TTS WAV 片段目录")
@@ -267,6 +299,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-subtitle-chars", type=positive_int, default=DEFAULT_MAX_CHARS)
     parser.add_argument("--max-subtitle-lines", type=positive_int, default=DEFAULT_MAX_LINES)
     parser.add_argument("--no-subtitles", action="store_true", help="生成不带字幕的视频")
+    parser.add_argument("--fps", type=positive_int, default=25, help="output frame rate")
+    parser.add_argument("--crf", type=int, default=18, help="H.264 constant quality")
+    parser.add_argument("--preset", default="slow", help="libx264 encoding preset")
+    parser.add_argument("--audio-bitrate", default="256k", help="AAC audio bitrate")
     parser.add_argument("--ffmpeg", default=os.environ.get("FFMPEG_BIN", "ffmpeg"))
     parser.add_argument("--ffprobe", default=os.environ.get("FFPROBE_BIN", "ffprobe"))
     return parser.parse_args(argv)
@@ -428,9 +464,11 @@ def build_illustration_timeline(
 
 def main(argv: list[str] | None = None):
     args = parse_args(argv)
+    video_width, video_height = args.size
 
     print("=" * 50)
     print("插图视频生成（自动中文字幕）")
+    print(f"画布: {video_width}x{video_height}")
     print("=" * 50)
 
     # 1. 加载数据
@@ -543,6 +581,8 @@ def main(argv: list[str] | None = None):
                 font_name=args.subtitle_font,
                 font_size=args.subtitle_font_size,
                 fonts_dir=args.subtitle_fonts_dir,
+                video_width=video_width,
+                video_height=video_height,
             )
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"错误: 无法构建音频/字幕时间轴: {exc}")
@@ -631,10 +671,18 @@ def main(argv: list[str] | None = None):
         "-map", "0:v:0",
         "-map", "1:a:0",
         "-c:v", "libx264",
+        "-preset", args.preset,
+        "-crf", str(args.crf),
         "-pix_fmt", "yuv420p",
-        "-vf", build_video_filter_chain(subtitle_filter),
+        "-vf", build_video_filter_chain(
+            subtitle_filter,
+            fps=args.fps,
+            video_width=video_width,
+            video_height=video_height,
+        ),
         "-c:a", "aac",
-        "-b:a", "192k",
+        "-b:a", args.audio_bitrate,
+        "-movflags", "+faststart",
         "-shortest",
         "-t", f"{total_duration_ms / 1000:.3f}",
         str(render_output),

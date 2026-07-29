@@ -416,6 +416,22 @@ def test_ffmpeg_filter_chain_expands_sparse_frames_before_subtitles(tmp_path):
     assert build_video_filter_chain() == "scale=896:1152,fps=25"
 
 
+def test_video_filters_support_landscape_canvas(tmp_path):
+    subtitle_filter = build_subtitle_filter(
+        tmp_path / "landscape.srt",
+        video_width=1280,
+        video_height=720,
+    )
+
+    assert "PlayResX\\=1280" in subtitle_filter or "PlayResX=1280" in subtitle_filter
+    assert "PlayResY\\=720" in subtitle_filter or "PlayResY=720" in subtitle_filter
+    assert build_video_filter_chain(
+        subtitle_filter,
+        video_width=1280,
+        video_height=720,
+    ).startswith("scale=1280:720,fps=25,subtitles=")
+
+
 def test_audio_timeline_validation_rejects_accumulated_drift():
     validate_audio_timeline(582.740, 582_740)
 
