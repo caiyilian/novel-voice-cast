@@ -1,0 +1,39 @@
+{
+  "name": "novel-voice-cast-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Secure Electron desktop runner for the Novel Voice Cast pipeline",
+  "author": "caiyilian",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "postinstall": "npm run prepare:electron",
+    "prepare:electron": "cross-env ELECTRON_GET_USE_PROXY=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ install-electron",
+    "dev": "npm run prepare:electron && electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "package:dir": "npm run prepare:electron && npm run build && cross-env ELECTRON_GET_USE_PROXY=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --dir --config electron-builder.config.ts",
+    "package:win": "npm run prepare:electron && npm run build && cross-env ELECTRON_GET_USE_PROXY=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --win nsis --config electron-builder.config.ts"
+  },
+  "dependencies": {
+    "solid-js": "1.9.14"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "26.1.2",
+    "cross-env": "10.1.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "7.3.6",
+    "vite-plugin-solid": "2.11.14",
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
