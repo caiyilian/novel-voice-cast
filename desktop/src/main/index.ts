@@ -1,9 +1,17 @@
 import { join } from "node:path"
 import { app, BrowserWindow, session } from "electron"
 import { registerIpcHandlers } from "./ipc"
+import { PipelineController } from "./pipeline-controller"
 import { allowedRendererUrl, createWindowOptions } from "./window-options"
 
 let mainWindow: BrowserWindow | null = null
+const pipelineController = new PipelineController({
+  publish: (event) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send("pipeline:event", event)
+    }
+  },
+})
 
 export function createMainWindow(): BrowserWindow {
   const preload = join(__dirname, "../preload/index.js")
@@ -32,7 +40,7 @@ export function createMainWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
-  registerIpcHandlers()
+  registerIpcHandlers(pipelineController)
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false)
   })

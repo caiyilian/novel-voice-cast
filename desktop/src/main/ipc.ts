@@ -1,12 +1,13 @@
 import { dialog, ipcMain } from "electron"
 import type { InputKind, TextFileSelection } from "../preload/types"
+import type { PipelineController } from "./pipeline-controller"
 import { isInputKind, validateTextFile } from "./text-file"
 
 function assertInputKind(value: unknown): asserts value is InputKind {
   if (!isInputKind(value)) throw new TypeError("Invalid input kind")
 }
 
-export function registerIpcHandlers(): void {
+export function registerIpcHandlers(controller: PipelineController): void {
   ipcMain.handle("dialog:pick-text-file", async (_event, inputKind: unknown) => {
     assertInputKind(inputKind)
     const result = await dialog.showOpenDialog({
@@ -25,4 +26,8 @@ export function registerIpcHandlers(): void {
       return validateTextFile(filePath)
     },
   )
+
+  ipcMain.handle("pipeline:get-state", () => controller.getState())
+  ipcMain.handle("pipeline:start", (_event, request) => controller.start(request))
+  ipcMain.handle("pipeline:stop", () => controller.stop())
 }
