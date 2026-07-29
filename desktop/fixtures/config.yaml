@@ -1,0 +1,18 @@
+novel:
+  text_path: "desktop/fixtures/novel.txt"
+  labels_path: "desktop/fixtures/labels.txt"
+
+output:
+  dir: "desktop/fixtures/output"
+  filename: "fixture_audio"
+  format: "mp3"
+
+features:
+  emotion_label: true
+  performance_direction: true
+
+bgm:
+  enabled: false
+
+illustrations:
+  enabled: false
