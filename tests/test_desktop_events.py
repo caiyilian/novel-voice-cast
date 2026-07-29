@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import yaml
@@ -78,6 +79,44 @@ def test_execute_stage_emits_start_and_complete_events(tmp_path, monkeypatch):
     assert [item["status"] for item in stages] == ["running", "complete"]
     assert [item["percent"] for item in progress] == [0.0, 100.0]
     assert stages[-1]["artifacts"] == [str(tmp_path / "novel.txt")]
+
+
+def test_stage_progress_monitor_polls_checkpoint_during_blocking_work(tmp_path, monkeypatch):
+    stream = io.StringIO()
+    emitter = DesktopEventEmitter(True, stream)
+    emitter.configure(True, stream=stream)
+    monkeypatch.setattr(run_full, "DESKTOP_EVENTS", emitter)
+    monitor_class = run_full.StageProgressMonitor
+    monkeypatch.setattr(
+        run_full,
+        "StageProgressMonitor",
+        lambda stage, probe: monitor_class(stage, probe, interval_seconds=0.1),
+    )
+    recorder = run_full.PipelineRecorder(tmp_path / "manifest.json", ["gender"])
+    checkpoint = tmp_path / "checkpoint.json"
+
+    def work():
+        checkpoint.write_text(
+            json.dumps({"results": [{"name": "甲"}, {"name": "乙"}]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        time.sleep(0.25)
+        return "ok"
+
+    assert run_full.execute_stage(
+        recorder,
+        "gender",
+        work,
+        progress_probe=run_full.checkpoint_progress_probe(
+            [(checkpoint, "results", 4)],
+            "已识别角色",
+        ),
+    ) == "ok"
+
+    progress = event_payloads(stream.getvalue(), "[PROGRESS]")
+    assert any(item["percent"] == 50.0 for item in progress)
+    assert any(item["operation"] == "已识别角色：2/4" for item in progress)
+    assert progress[-1]["percent"] == 100.0
 
 
 def test_execute_stage_emits_failed_and_interrupted_states(tmp_path, monkeypatch):

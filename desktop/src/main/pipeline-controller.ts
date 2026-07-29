@@ -9,8 +9,15 @@ import type {
   PipelineSnapshot,
   PipelineStage,
   PipelineStartRequest,
+  StageRuntimeStatus,
 } from "../preload/types"
 import { PIPELINE_STAGES } from "../preload/types"
+import {
+  appendPipelineLog,
+  applyStructuredEvent,
+  createStageRuntime,
+  parseStructuredLine,
+} from "./pipeline-events"
 import { validateTextFile } from "./text-file"
 import { resolveProjectPaths, type ProjectPaths } from "./project-paths"
 
@@ -99,6 +106,12 @@ export class PipelineController {
     exitCode: null,
     error: null,
     request: null,
+    currentStage: null,
+    currentStageIndex: null,
+    stagePercent: 0,
+    operation: "等待开始",
+    stages: createStageRuntime(),
+    logs: [],
   }
 
   constructor(options: PipelineControllerOptions = {}) {
@@ -109,6 +122,8 @@ export class PipelineController {
     return {
       ...this.snapshot,
       request: this.snapshot.request ? { ...this.snapshot.request } : null,
+      stages: this.snapshot.stages.map((stage) => ({ ...stage })),
+      logs: this.snapshot.logs.map((entry) => ({ ...entry })),
     }
   }
 
@@ -167,6 +182,12 @@ export class PipelineController {
       exitCode: null,
       error: null,
       request: normalizedRequest,
+      currentStage: null,
+      currentStageIndex: null,
+      stagePercent: 0,
+      operation: "正在启动 Python 流水线",
+      stages: createStageRuntime(normalizedRequest),
+      logs: [],
     })
 
     try {
@@ -221,15 +242,35 @@ export class PipelineController {
     const lines = combined.split(/\r?\n/)
     this[key] = lines.pop() ?? ""
     for (const line of lines) {
-      this.publish({ type: "output", stream, line, timestamp: new Date().toISOString() })
+      this.consumeLine(stream, line)
     }
+  }
+
+  private consumeLine(stream: "stdout" | "stderr", line: string): void {
+    const timestamp = new Date().toISOString()
+    this.publish({ type: "output", stream, line, timestamp })
+    const event = parseStructuredLine(line)
+    if (event) {
+      this.snapshot = applyStructuredEvent(this.snapshot, event)
+    } else if (line.trim()) {
+      this.snapshot = appendPipelineLog(this.snapshot, {
+        timestamp,
+        level: stream === "stderr" ? "ERROR" : "INFO",
+        message: line,
+        stream,
+        stage: this.snapshot.currentStage,
+      })
+    } else {
+      return
+    }
+    this.publishState()
   }
 
   private flushOutput(): void {
     for (const stream of ["stdout", "stderr"] as const) {
       const key = stream === "stdout" ? "stdoutBuffer" : "stderrBuffer"
       if (this[key]) {
-        this.publish({ type: "output", stream, line: this[key], timestamp: new Date().toISOString() })
+        this.consumeLine(stream, this[key])
         this[key] = ""
       }
     }
@@ -242,8 +283,17 @@ export class PipelineController {
     const wasStopping = this.snapshot.status === "stopping"
     this.child = null
     const status = wasStopping ? "interrupted" : code === 0 ? "completed" : "failed"
+    const terminalStageStatus: StageRuntimeStatus | null = (
+      status === "interrupted" ? "interrupted" : status === "failed" ? "failed" : null
+    )
+    const stages = terminalStageStatus
+      ? this.snapshot.stages.map((stage) => (
+          stage.status === "running" ? { ...stage, status: terminalStageStatus } : stage
+        ))
+      : this.snapshot.stages
     this.update({
       status,
+      stages,
       pid: null,
       exitCode: code,
       finishedAt: new Date().toISOString(),
