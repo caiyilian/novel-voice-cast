@@ -41,6 +41,23 @@ def test_compact_control_drops_quoted_dialogue_but_keeps_performance_axes():
     assert control_variants(compact)[-1] == ""
 
 
+def test_structured_pace_overrides_overcautious_directing_prose():
+    measured = compact_performance_control(
+        "平稳叙述，节奏稍缓，不急促",
+        speaker="旁白",
+        pace_hint="measured",
+    )
+    slow = compact_performance_control(
+        "保持平稳",
+        speaker="旁白",
+        pace_hint="slow",
+    )
+
+    assert "节奏适中" in measured
+    assert "语速舒缓" not in measured
+    assert "语速舒缓" in slow
+
+
 def test_duration_envelope_rejects_acceleration_and_spoken_control_leak():
     bounds = duration_quality_bounds(
         "这里的村民已不再需要咱了。",
@@ -52,3 +69,15 @@ def test_duration_envelope_rejects_acceleration_and_spoken_control_leak():
     assert duration_quality_problems(bounds["expected_duration_seconds"], bounds) == []
     assert "too fast" in duration_quality_problems(0.8, bounds)[0]
     assert "leaked control text" in duration_quality_problems(21.6, bounds)[0]
+
+
+def test_relaxed_fast_guard_accepts_natural_take_without_prescribing_duration():
+    bounds = duration_quality_bounds(
+        "这里的村民已不再需要咱了。",
+        "平稳，语速舒缓",
+        min_ratio=0.55,
+        max_ratio=1.9,
+    )
+
+    assert duration_quality_problems(2.2, bounds) == []
+    assert "too fast" in duration_quality_problems(0.6, bounds)[0]

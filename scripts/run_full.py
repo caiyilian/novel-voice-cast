@@ -30,6 +30,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = ROOT / "backend"
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core.bgm_mixer import mix_bgm
@@ -207,6 +208,112 @@ def character_cards_path(config: dict[str, Any]) -> Path:
     return resolve_path(value) if value else ROOT / "docs/角色卡.md"
 
 
+def illustration_generation_settings(
+    config: dict[str, Any],
+    *,
+    size: str | None = None,
+) -> dict[str, Any]:
+    illustration_config = config.get("illustrations", {})
+    provider = str(illustration_config.get("provider", "agnes"))
+    endpoint_default = (
+        "http://127.0.0.1:8000/generate"
+        if provider == "local-http"
+        else "https://apihub.agnes-ai.com/v1/images/generations"
+    )
+    settings: dict[str, Any] = {
+        "model": str(illustration_config.get("model", "agnes-image-2.1-flash")),
+        "endpoint": str(illustration_config.get("endpoint", endpoint_default)).rstrip("/"),
+        "size": str(size or illustration_config.get("size", "896x1152")),
+    }
+    if provider == "local-http":
+        from scripts.generate_illustrations import DEFAULT_NEGATIVE_PROMPT
+
+        settings.update(
+            steps=int(illustration_config.get("steps", 25)),
+            cfg=float(illustration_config.get("cfg", 7.0)),
+            negative_prompt=str(
+                illustration_config.get("negative_prompt", DEFAULT_NEGATIVE_PROMPT)
+            ).strip(),
+            seed=int(illustration_config.get("seed", -1)),
+        )
+    return settings
+
+
+def illustration_variant_specs(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the portrait target and optional independent landscape target."""
+
+    illustration_config = config.get("illustrations", {})
+    portrait = {
+        "name": "portrait",
+        "directory": illustration_output_dir(config),
+        "checkpoint": illustration_checkpoint_path(config),
+        "settings": illustration_generation_settings(config),
+        "composition_suffix": str(
+            illustration_config.get(
+                "composition_suffix",
+                "vertical 7:9 portrait frame, balanced full-height composition, "
+                "keep important faces and details clear of the lower subtitle-safe area",
+            )
+        ),
+    }
+    values = [portrait]
+    landscape = illustration_config.get("landscape", {})
+    if isinstance(landscape, dict) and landscape.get("enabled", False):
+        values.append(
+            {
+                "name": "landscape",
+                "directory": resolve_path(
+                    landscape.get("output_dir", "output/illustrations_local_landscape_16x9")
+                ),
+                "checkpoint": resolve_path(
+                    landscape.get(
+                        "checkpoint_path",
+                        "output/illustrations_local_landscape_16x9_checkpoint.json",
+                    )
+                ),
+                "settings": illustration_generation_settings(
+                    config,
+                    size=str(landscape.get("size", "1280x720")),
+                ),
+                "composition_suffix": str(
+                    landscape.get(
+                        "composition_suffix",
+                        "cinematic 16:9 landscape frame, expand the environment horizontally, "
+                        "keep important faces and details clear of the lower subtitle-safe area",
+                    )
+                ),
+            }
+        )
+    return values
+
+
+def illustration_validation_options(
+    config: dict[str, Any],
+    *,
+    settings: dict[str, Any] | None = None,
+    composition_suffix: str | None = None,
+) -> dict[str, Any]:
+    illustration_config = config.get("illustrations", {})
+    settings = settings or illustration_generation_settings(config)
+    return {
+        "expected_provider": str(illustration_config.get("provider", "agnes")),
+        "expected_model": settings["model"],
+        "expected_size": settings["size"],
+        "expected_endpoint": settings["endpoint"],
+        "expected_generation_settings": settings,
+        "prompt_audit_enabled": bool(
+            illustration_config.get("prompt_audit_enabled", True)
+        ),
+        "novel_path": resolve_path(config["novel"]["text_path"]),
+        "character_cards": character_cards_path(config),
+        "composition_suffix": (
+            str(illustration_config.get("composition_suffix", ""))
+            if composition_suffix is None
+            else composition_suffix
+        ),
+    }
+
+
 def video_output_path(config: dict[str, Any]) -> Path:
     value = config.get("video", {}).get("output_path")
     return resolve_path(value) if value else output_dir(config) / "illustration_video_agnes_subtitled.mp4"
@@ -215,6 +322,47 @@ def video_output_path(config: dict[str, Any]) -> Path:
 def video_subtitle_path(config: dict[str, Any]) -> Path:
     value = config.get("video", {}).get("subtitle_path")
     return resolve_path(value) if value else output_dir(config) / "illustration_video_agnes_subtitles.srt"
+
+
+def video_variant_specs(config: dict[str, Any]) -> list[dict[str, Any]]:
+    illustration_variants = {item["name"]: item for item in illustration_variant_specs(config)}
+    video_config = config.get("video", {})
+    values = [
+        {
+            "name": "portrait",
+            "illustrations": illustration_variants["portrait"],
+            "output": video_output_path(config),
+            "subtitle": video_subtitle_path(config),
+            "options": video_config,
+        }
+    ]
+    landscape_images = illustration_variants.get("landscape")
+    landscape_video = video_config.get("landscape", {})
+    if (
+        landscape_images
+        and isinstance(landscape_video, dict)
+        and landscape_video.get("enabled", True)
+    ):
+        values.append(
+            {
+                "name": "landscape",
+                "illustrations": landscape_images,
+                "output": resolve_path(
+                    landscape_video.get(
+                        "output_path",
+                        "output/illustration_video_local_landscape_16x9_subtitled.mp4",
+                    )
+                ),
+                "subtitle": resolve_path(
+                    landscape_video.get(
+                        "subtitle_path",
+                        "output/illustration_video_local_landscape_16x9_subtitles.srt",
+                    )
+                ),
+                "options": {**video_config, **landscape_video},
+            }
+        )
+    return values
 
 
 def stage_slice(from_stage: str | None, to_stage: str | None) -> tuple[str, ...]:
@@ -1017,7 +1165,7 @@ def require_performance_results(
     return merged
 
 
-TTS_PIPELINE_VERSION = 6
+TTS_PIPELINE_VERSION = 7
 VOXCPM_BATCH_CHECKPOINT_VERSION = 5
 STREAMING_TTS_CHECKPOINT_VERSION = 1
 
@@ -1361,7 +1509,6 @@ def create_voxcpm_script(tasks: list[dict[str, Any]], config: dict[str, Any]) ->
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 
@@ -1437,32 +1584,6 @@ def inspect_wav(path):
         "wav_channels": int(info.channels),
         "wav_duration_seconds": round(duration, 6),
     }}
-
-def correct_fast_audio(path, source_duration, target_duration):
-    """Slow speech with FFmpeg atempo, preserving pitch and sample format."""
-    ratio = float(source_duration) / float(target_duration)
-    filters = []
-    while ratio < 0.5:
-        filters.append("atempo=0.5")
-        ratio /= 0.5
-    while ratio > 2.0:
-        filters.append("atempo=2.0")
-        ratio /= 2.0
-    filters.append(f"atempo={{ratio:.8f}}")
-    corrected = path + ".tempo.wav"
-    completed = subprocess.run(
-        [
-            "ffmpeg", "-y", "-loglevel", "error", "-i", path,
-            "-filter:a", ",".join(filters), "-c:a", "pcm_s16le", corrected,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(f"FFmpeg tempo correction failed: {{completed.stderr[-500:]}}")
-    os.replace(corrected, path)
-    return inspect_wav(path)
 
 def valid_result(result, task):
     if not isinstance(result, dict):
@@ -1572,25 +1693,15 @@ for position, task in enumerate(tasks, 1):
             minimum = float(task.get("min_duration_seconds", 0.0))
             maximum = float(task.get("max_duration_seconds", float("inf")))
             if duration < minimum:
-                if generation_attempt < {task_attempts!r}:
-                    raise RuntimeError(
-                        f"audio is too fast: {{duration:.3f}}s < {{minimum:.3f}}s"
-                    )
-                target = max(
-                    minimum * 1.02,
-                    float(task.get("expected_duration_seconds", minimum)),
+                # Never repair a performance with post-generation time
+                # stretching.  VoxCPM sampling is stochastic, so discard this
+                # take and let the normal attempt loop sample another one.  If
+                # every take is anomalously fast, fail with a resumable
+                # checkpoint instead of silently changing the actor's timing.
+                raise RuntimeError(
+                    "audio is anomalously fast; retrying a fresh VoxCPM take: "
+                    f"{{duration:.3f}}s < {{minimum:.3f}}s"
                 )
-                source_duration = duration
-                wave_meta = correct_fast_audio(temporary_wav, duration, target)
-                duration = wave_meta["wav_duration_seconds"]
-                diagnostics["tempo_corrected"] = True
-                diagnostics["source_duration_seconds"] = source_duration
-                diagnostics["tempo_target_seconds"] = target
-                if duration < minimum:
-                    raise RuntimeError(
-                        "tempo-corrected audio is still too fast: "
-                        f"{{duration:.3f}}s < {{minimum:.3f}}s"
-                    )
             if duration > maximum:
                 raise RuntimeError(
                     "audio is too slow or leaked control text: "
@@ -1613,10 +1724,6 @@ for position, task in enumerate(tasks, 1):
             last_error = exc
             try:
                 os.unlink(temporary_wav)
-            except FileNotFoundError:
-                pass
-            try:
-                os.unlink(temporary_wav + ".tempo.wav")
             except FileNotFoundError:
                 pass
             if generation_attempt < {task_attempts!r}:
@@ -1776,6 +1883,7 @@ def make_tts_task(
             raw_control,
             speaker=speaker,
             emotion=str(emotion.get("emotion", "")),
+            pace_hint=str(performance.get("pace", "")),
             max_chars=options["control_max_chars"],
         )
         chunks = split_tts_text(
@@ -2489,7 +2597,7 @@ def step_bgm_generation(config: dict[str, Any]) -> str:
     inference_steps = int(bgm_config.get("inference_steps", 8))
     model = str(bgm_config.get("model", ACE_STEP_MODEL))
     lm_model = str(bgm_config.get("lm_model", ACE_STEP_LM_MODEL))
-    thinking = bool(bgm_config.get("thinking", True))
+    thinking = bool(bgm_config.get("thinking", False))
     guidance_scale = float(bgm_config.get("guidance_scale", 7.0))
     force = bool(bgm_config.get("force_generate", False))
     if not force:
@@ -2540,6 +2648,8 @@ def step_bgm_generation(config: dict[str, Any]) -> str:
         str(guidance_scale),
         "--clip-attempts",
         str(int(bgm_config.get("clip_attempts", 3))),
+        "--process-clip-limit",
+        str(int(bgm_config.get("process_clip_limit", 16))),
         "--proxy",
         str(bgm_config.get("proxy", "http://127.0.0.1:7890")),
     ]
@@ -2547,9 +2657,12 @@ def step_bgm_generation(config: dict[str, Any]) -> str:
         command.append("--no-thinking")
     if force:
         command.append("--force")
-    run_checked_subprocess(
+    run_resumable_bgm_subprocess(
         command,
         timeout=int(bgm_config.get("generation_timeout", 7200)),
+        manifest_path=manifest_path,
+        max_restarts=int(bgm_config.get("process_max_restarts", 64)),
+        native_no_progress_limit=int(bgm_config.get("native_no_progress_limit", 3)),
     )
     problems = validate_bgm_cache(
         segments,
@@ -2641,15 +2754,27 @@ def validate_illustrations(
     checkpoint_path: Path,
     prompt_audit_checkpoint: Path,
     *,
+    expected_provider: str = "agnes",
     expected_model: str,
     expected_size: str,
     expected_endpoint: str,
+    expected_generation_settings: dict[str, Any] | None = None,
+    prompt_audit_enabled: bool = True,
     novel_path: Path,
     character_cards: Path,
+    composition_suffix: str = "",
 ) -> list[str]:
     plan = load_illustration_plan(plan_path)
     if not plan:
         return ["illustration plan is missing or empty"]
+    from scripts.generate_illustrations import (
+        CHECKPOINT_VERSION,
+        apply_audited_prompts,
+        generation_prompt_hash,
+        generation_source_hash,
+        prompt_for_target,
+    )
+
     problems = []
     for index in range(1, len(plan) + 1):
         candidates = list(directory.glob(f"{index:04d}_*.png"))
@@ -2657,22 +2782,25 @@ def validate_illustrations(
             problems.append(f"illustration {index:04d} is missing, empty, or ambiguous")
     checkpoint = read_json(checkpoint_path, None)
     if not isinstance(checkpoint, dict):
-        problems.append("Agnes illustration checkpoint is missing or invalid")
+        problems.append("illustration checkpoint is missing or invalid")
     else:
-        from scripts.generate_illustrations import (
-            CHECKPOINT_VERSION,
-            apply_audited_prompts,
-            generation_source_hash,
-        )
-
-        if checkpoint.get("version") != CHECKPOINT_VERSION or checkpoint.get("provider") != "agnes":
-            problems.append("illustration checkpoint is not an Agnes v3 checkpoint")
+        if checkpoint.get("version") != CHECKPOINT_VERSION:
+            problems.append(
+                f"illustration checkpoint is not version {CHECKPOINT_VERSION}"
+            )
+        if checkpoint.get("provider") != expected_provider:
+            problems.append("illustration checkpoint provider does not match configuration")
         if checkpoint.get("model") != expected_model:
             problems.append("illustration checkpoint model does not match configuration")
         if checkpoint.get("size") != expected_size:
             problems.append("illustration checkpoint size does not match configuration")
         if checkpoint.get("endpoint") != expected_endpoint.rstrip("/"):
             problems.append("illustration checkpoint endpoint does not match configuration")
+        if (
+            expected_generation_settings is not None
+            and checkpoint.get("generation_settings") != expected_generation_settings
+        ):
+            problems.append("illustration checkpoint generation settings do not match configuration")
         records = checkpoint.get("images")
         if not isinstance(records, list) or len(records) != len(plan):
             problems.append("illustration checkpoint does not exactly cover the current plan")
@@ -2683,35 +2811,61 @@ def validate_illustrations(
         ) or not all(isinstance(record, dict) for record in records):
             problems.append("illustration checkpoint contains incomplete or misordered records")
 
-    from app.core.visual_prompt_auditor import (
-        VISUAL_PROMPT_PIPELINE_VERSION,
-        visual_prompt_source_hash,
-    )
+    expected_prompt_plan = plan
+    expected_audit_source_hash: str | None = None
+    if prompt_audit_enabled:
+        from app.core.visual_prompt_auditor import (
+            VISUAL_PROMPT_PIPELINE_VERSION,
+            visual_prompt_source_hash,
+        )
 
-    audit = read_json(prompt_audit_checkpoint, None)
-    if not isinstance(audit, dict):
-        problems.append("visual prompt audit checkpoint is missing or invalid")
-    else:
-        novel_text = novel_path.read_text(encoding="utf-8") if novel_path.is_file() else ""
-        cards_text = character_cards.read_text(encoding="utf-8") if character_cards.is_file() else ""
-        expected_audit_hash = visual_prompt_source_hash(novel_text, plan, cards_text)
-        if (
-            audit.get("pipeline_version") != VISUAL_PROMPT_PIPELINE_VERSION
-            or audit.get("model") != SENSENOVA_FLASH_LITE_MODEL
-            or audit.get("total_items") != len(plan)
-            or audit.get("completed_indices") != list(range(len(plan)))
-            or audit.get("errors")
-            or audit.get("source_hash") != expected_audit_hash
-        ):
-            problems.append("visual prompt audit checkpoint is incomplete or incompatible")
-        elif isinstance(checkpoint, dict):
-            audited_plan = apply_audited_prompts(plan, audit.get("results", []))
-            if checkpoint.get("source_hash") != generation_source_hash(audited_plan):
-                problems.append("illustration checkpoint does not belong to the audited plan")
+        audit = read_json(prompt_audit_checkpoint, None)
+        if not isinstance(audit, dict):
+            problems.append("visual prompt audit checkpoint is missing or invalid")
+        else:
+            novel_text = novel_path.read_text(encoding="utf-8") if novel_path.is_file() else ""
+            cards_text = character_cards.read_text(encoding="utf-8") if character_cards.is_file() else ""
+            expected_audit_hash = visual_prompt_source_hash(novel_text, plan, cards_text)
+            expected_audit_source_hash = expected_audit_hash
+            if (
+                audit.get("pipeline_version") != VISUAL_PROMPT_PIPELINE_VERSION
+                or audit.get("model") != SENSENOVA_FLASH_LITE_MODEL
+                or audit.get("total_items") != len(plan)
+                or audit.get("completed_indices") != list(range(len(plan)))
+                or audit.get("errors")
+                or audit.get("source_hash") != expected_audit_hash
+            ):
+                problems.append("visual prompt audit checkpoint is incomplete or incompatible")
+            else:
+                expected_prompt_plan = apply_audited_prompts(plan, audit.get("results", []))
+
+    if isinstance(checkpoint, dict):
+        if checkpoint.get("source_hash") != generation_source_hash(plan):
+            problems.append("illustration checkpoint does not belong to the current plan")
+        if checkpoint.get("audit_source_hash") != expected_audit_source_hash:
+            problems.append("illustration checkpoint audit source does not match")
+        records = checkpoint.get("images")
+        if isinstance(records, list) and len(records) == len(expected_prompt_plan):
+            for index, (record, item) in enumerate(zip(records, expected_prompt_plan)):
+                if not isinstance(record, dict):
+                    continue
+                prompt = prompt_for_target(str(item.get("prompt", "")), composition_suffix)
+                if record.get("prompt_hash") != generation_prompt_hash(prompt):
+                    problems.append(f"illustration {index + 1:04d} prompt fingerprint does not match")
+                    break
     return problems
 
 
-def run_checked_subprocess(command: list[str], timeout: int) -> None:
+BGM_PROCESS_RESTART_EXIT_CODE = 75
+WINDOWS_ACCESS_VIOLATION_EXIT_CODE = 0xC0000005
+
+
+def run_checked_subprocess(
+    command: list[str],
+    timeout: int,
+    *,
+    allowed_returncodes: set[int] | None = None,
+) -> int:
     process = subprocess.Popen(
         command,
         cwd=str(ROOT),
@@ -2756,9 +2910,89 @@ def run_checked_subprocess(command: list[str], timeout: int) -> None:
             process.wait()
         raise
 
-    if returncode != 0:
+    if returncode != 0 and returncode not in (allowed_returncodes or set()):
         detail = "".join(output_tail).strip() or "no error output"
         raise PipelineError(f"Subprocess failed ({returncode}): {detail[-2000:]}")
+    return returncode
+
+
+def _bgm_checkpoint_clip_count(manifest_path: Path) -> int:
+    manifest = read_json(manifest_path, {})
+    segments = manifest.get("segments", {}) if isinstance(manifest, dict) else {}
+    if not isinstance(segments, dict):
+        return 0
+    return sum(
+        len(entry.get("clips", []))
+        for entry in segments.values()
+        if isinstance(entry, dict) and isinstance(entry.get("clips", []), list)
+    )
+
+
+def run_resumable_bgm_subprocess(
+    command: list[str],
+    timeout: int,
+    manifest_path: Path,
+    *,
+    max_restarts: int = 64,
+    native_no_progress_limit: int = 3,
+) -> None:
+    """Restart ACE-Step after planned batches or native access violations."""
+    progress_before = _bgm_checkpoint_clip_count(manifest_path)
+    native_no_progress = 0
+    restart_codes = {
+        BGM_PROCESS_RESTART_EXIT_CODE,
+        WINDOWS_ACCESS_VIOLATION_EXIT_CODE,
+    }
+    active_command = list(command)
+
+    for restart_index in range(max_restarts + 1):
+        returncode = run_checked_subprocess(
+            active_command,
+            timeout,
+            allowed_returncodes=restart_codes,
+        )
+        if returncode == 0:
+            return
+
+        progress_after = _bgm_checkpoint_clip_count(manifest_path)
+        made_progress = progress_after > progress_before
+        if returncode == BGM_PROCESS_RESTART_EXIT_CODE and not made_progress:
+            raise PipelineError(
+                "ACE-Step requested a planned restart without checkpointing a new BGM clip"
+            )
+
+        if returncode == WINDOWS_ACCESS_VIOLATION_EXIT_CODE and not made_progress:
+            native_no_progress += 1
+            if native_no_progress >= native_no_progress_limit:
+                raise PipelineError(
+                    "ACE-Step repeatedly crashed with Windows access violation "
+                    f"without checkpoint progress ({native_no_progress} attempts)"
+                )
+        else:
+            native_no_progress = 0
+
+        if restart_index >= max_restarts:
+            raise PipelineError(
+                f"ACE-Step exceeded the BGM process restart limit ({max_restarts})"
+            )
+
+        reason = (
+            "planned process refresh"
+            if returncode == BGM_PROCESS_RESTART_EXIT_CODE
+            else "Windows access violation 0xC0000005"
+        )
+        print(
+            f"  ACE-Step {reason}; checkpoint advanced "
+            f"{progress_before} -> {progress_after}. Restarting cleanly "
+            f"({restart_index + 1}/{max_restarts})...",
+            flush=True,
+        )
+        # ``--force`` applies to the first process only. Once that process has
+        # checkpointed progress, later clean processes must reuse those clips
+        # or a planned refresh would repeatedly regenerate the first batch.
+        if made_progress and "--force" in active_command:
+            active_command = [argument for argument in active_command if argument != "--force"]
+        progress_before = progress_after
 
 
 def step_illustration_plan(config: dict[str, Any]) -> str:
@@ -2788,24 +3022,35 @@ def step_illustration_plan(config: dict[str, Any]) -> str:
 def step_illustrations(config: dict[str, Any]) -> str:
     plan_path = illustration_plan_path(config)
     illustration_config = config.get("illustrations", {})
-    directory = illustration_output_dir(config)
-    checkpoint = illustration_checkpoint_path(config)
+    variants = illustration_variant_specs(config)
+    portrait = variants[0]
+    directory = portrait["directory"]
+    checkpoint = portrait["checkpoint"]
     audit_checkpoint = visual_prompt_checkpoint_path(config)
-    model = str(illustration_config.get("model", "agnes-image-2.1-flash"))
-    size = str(illustration_config.get("size", "896x1152"))
+    provider = str(illustration_config.get("provider", "agnes"))
+    settings = portrait["settings"]
+    model = str(settings["model"])
+    size = str(settings["size"])
     if not config.get("illustrations", {}).get("force_generate", False):
-        if not validate_illustrations(
-            plan_path,
-            directory,
-            checkpoint,
-            audit_checkpoint,
-            expected_model=model,
-            expected_size=size,
-            expected_endpoint=str(illustration_config.get("endpoint", "https://apihub.agnes-ai.com/v1/images/generations")),
-            novel_path=resolve_path(config["novel"]["text_path"]),
-            character_cards=character_cards_path(config),
-        ):
-            print(f"  using cached illustrations: {directory}")
+        cached_problems = [
+            validate_illustrations(
+                plan_path,
+                variant["directory"],
+                variant["checkpoint"],
+                audit_checkpoint,
+                **illustration_validation_options(
+                    config,
+                    settings=variant["settings"],
+                    composition_suffix=variant["composition_suffix"],
+                ),
+            )
+            for variant in variants
+        ]
+        if all(not problems for problems in cached_problems):
+            print(
+                "  using cached illustration variants: "
+                + ", ".join(str(variant["directory"]) for variant in variants)
+            )
             return str(directory)
     command = [
         sys.executable,
@@ -2816,28 +3061,54 @@ def step_illustrations(config: dict[str, Any]) -> str:
         "--output-dir", str(directory),
         "--checkpoint", str(checkpoint),
         "--prompt-audit-checkpoint", str(audit_checkpoint),
-        "--endpoint", str(illustration_config.get("endpoint", "https://apihub.agnes-ai.com/v1/images/generations")),
+        "--provider", provider,
+        "--endpoint", str(settings["endpoint"]),
         "--model", model,
         "--size", size,
+        "--composition-suffix", str(portrait["composition_suffix"]),
+        "--timeout", str(illustration_config.get("request_timeout", 900.0)),
+        "--max-attempts", str(illustration_config.get("max_attempts", 5)),
         "--interval-min", str(illustration_config.get("interval_min", 1.0)),
         "--interval-max", str(illustration_config.get("interval_max", 2.0)),
     ]
+    if provider == "local-http":
+        command.extend([
+            "--steps", str(settings["steps"]),
+            "--cfg", str(settings["cfg"]),
+            "--negative-prompt", str(settings["negative_prompt"]),
+            "--seed", str(settings["seed"]),
+        ])
+    if len(variants) > 1:
+        landscape = variants[1]
+        command.extend(
+            [
+                "--landscape-output-dir", str(landscape["directory"]),
+                "--landscape-checkpoint", str(landscape["checkpoint"]),
+                "--landscape-size", str(landscape["settings"]["size"]),
+                "--landscape-composition-suffix", str(landscape["composition_suffix"]),
+            ]
+        )
     if not illustration_config.get("force_generate", False):
         command.append("--resume")
     if illustration_config.get("force_prompt_audit", False):
         command.append("--force-prompt-audit")
+    if not illustration_config.get("prompt_audit_enabled", True):
+        command.append("--skip-prompt-audit")
     run_checked_subprocess(command, int(config.get("illustrations", {}).get("generation_timeout", 86400)))
-    problems = validate_illustrations(
-        plan_path,
-        directory,
-        checkpoint,
-        audit_checkpoint,
-        expected_model=model,
-        expected_size=size,
-        expected_endpoint=str(illustration_config.get("endpoint", "https://apihub.agnes-ai.com/v1/images/generations")),
-        novel_path=resolve_path(config["novel"]["text_path"]),
-        character_cards=character_cards_path(config),
-    )
+    problems = []
+    for variant in variants:
+        variant_problems = validate_illustrations(
+            plan_path,
+            variant["directory"],
+            variant["checkpoint"],
+            audit_checkpoint,
+            **illustration_validation_options(
+                config,
+                settings=variant["settings"],
+                composition_suffix=variant["composition_suffix"],
+            ),
+        )
+        problems.extend(f"{variant['name']}: {problem}" for problem in variant_problems)
     if problems:
         raise PipelineError(f"Illustration generator reported success but output is invalid: {problems[:5]}")
     return str(directory)
@@ -2845,72 +3116,92 @@ def step_illustrations(config: dict[str, Any]) -> str:
 
 def step_video(config: dict[str, Any]) -> str:
     plan_path = illustration_plan_path(config)
-    illustration_config = config.get("illustrations", {})
-    directory = illustration_output_dir(config)
     audio = mixed_audio_path(config)
-    video = video_output_path(config)
-    subtitle = video_subtitle_path(config)
     video_config = config.get("video", {})
     ffmpeg_bin = str(video_config.get("ffmpeg", os.environ.get("FFMPEG_BIN", "ffmpeg")))
     ffprobe_bin = str(video_config.get("ffprobe", os.environ.get("FFPROBE_BIN", "ffprobe")))
-    image_files = sorted(directory.glob("*.png"))
-    dependencies = [plan_path, audio, *image_files]
-    illustration_problems = validate_illustrations(
-        plan_path,
-        directory,
-        illustration_checkpoint_path(config),
-        visual_prompt_checkpoint_path(config),
-        expected_model=str(illustration_config.get("model", "agnes-image-2.1-flash")),
-        expected_size=str(illustration_config.get("size", "896x1152")),
-        expected_endpoint=str(illustration_config.get("endpoint", "https://apihub.agnes-ai.com/v1/images/generations")),
-        novel_path=resolve_path(config["novel"]["text_path"]),
-        character_cards=character_cards_path(config),
-    )
-    if illustration_problems:
-        raise PipelineError(f"Cannot generate video: {illustration_problems[:5]}")
     if not nonempty_file(audio):
         raise PipelineError(f"Cannot generate video; mixed audio is missing: {audio}")
-    cached_duration_matches = (
-        nonempty_file(video)
-        and abs(
-            media_duration_seconds(video, ffprobe_bin)
-            - media_duration_seconds(audio, ffprobe_bin)
-        ) <= 1.0
-    )
-    if (
-        not config.get("video", {}).get("force", False)
-        and dependencies_are_older(video, dependencies)
-        and cached_duration_matches
-    ):
-        print(f"  using cached video: {video}")
-        return str(video)
-    run_checked_subprocess(
-        [
-            sys.executable,
-            str(ROOT / "scripts/generate_video.py"),
-            "--plan", str(plan_path),
-            "--illustrations-dir", str(directory),
-            "--audio", str(audio),
-            "--output", str(video),
-            "--novel", str(resolve_path(config["novel"]["text_path"])),
-            "--labels", str(resolve_path(config["novel"]["labels_path"])),
-            "--segments-dir", str(output_dir(config) / "segments"),
-            "--subtitle-output", str(subtitle),
-            "--ffmpeg", ffmpeg_bin,
-            "--ffprobe", ffprobe_bin,
-        ],
-        int(config.get("video", {}).get("timeout", 86400)),
-    )
-    if (
-        not nonempty_file(video)
-        or not dependencies_are_older(video, dependencies)
-        or abs(
-            media_duration_seconds(video, ffprobe_bin)
-            - media_duration_seconds(audio, ffprobe_bin)
-        ) > 1.0
-    ):
-        raise PipelineError(f"Video generator did not create a fresh output: {video}")
-    return str(video)
+    outputs = []
+    for variant in video_variant_specs(config):
+        illustration = variant["illustrations"]
+        directory = illustration["directory"]
+        checkpoint = illustration["checkpoint"]
+        settings = illustration["settings"]
+        video = variant["output"]
+        subtitle = variant["subtitle"]
+        options = variant["options"]
+        image_files = sorted(directory.glob("*.png"))
+        dependencies = [plan_path, audio, *image_files]
+        illustration_problems = validate_illustrations(
+            plan_path,
+            directory,
+            checkpoint,
+            visual_prompt_checkpoint_path(config),
+            **illustration_validation_options(
+                config,
+                settings=settings,
+                composition_suffix=illustration["composition_suffix"],
+            ),
+        )
+        if illustration_problems:
+            raise PipelineError(
+                f"Cannot generate {variant['name']} video: {illustration_problems[:5]}"
+            )
+        cached_duration_matches = (
+            nonempty_file(video)
+            and abs(
+                media_duration_seconds(video, ffprobe_bin)
+                - media_duration_seconds(audio, ffprobe_bin)
+            ) <= 1.0
+        )
+        if (
+            not options.get("force", False)
+            and dependencies_are_older(video, dependencies)
+            and cached_duration_matches
+        ):
+            print(f"  using cached {variant['name']} video: {video}")
+            outputs.append(video)
+            continue
+        run_checked_subprocess(
+            [
+                sys.executable,
+                str(ROOT / "scripts/generate_video.py"),
+                "--plan", str(plan_path),
+                "--illustrations-dir", str(directory),
+                "--audio", str(audio),
+                "--output", str(video),
+                "--size", str(settings["size"]),
+                "--novel", str(resolve_path(config["novel"]["text_path"])),
+                "--labels", str(resolve_path(config["novel"]["labels_path"])),
+                "--segments-dir", str(output_dir(config) / "segments"),
+                "--subtitle-output", str(subtitle),
+                "--subtitle-font", str(options.get("subtitle_font", "SimHei")),
+                "--subtitle-font-size", str(options.get("subtitle_font_size", 42)),
+                "--max-subtitle-chars", str(options.get("max_subtitle_chars", 16)),
+                "--max-subtitle-lines", str(options.get("max_subtitle_lines", 2)),
+                "--fps", str(options.get("fps", 25)),
+                "--crf", str(options.get("crf", 18)),
+                "--preset", str(options.get("preset", "slow")),
+                "--audio-bitrate", str(options.get("audio_bitrate", "256k")),
+                "--ffmpeg", ffmpeg_bin,
+                "--ffprobe", ffprobe_bin,
+            ],
+            int(options.get("timeout", 86400)),
+        )
+        if (
+            not nonempty_file(video)
+            or not dependencies_are_older(video, dependencies)
+            or abs(
+                media_duration_seconds(video, ffprobe_bin)
+                - media_duration_seconds(audio, ffprobe_bin)
+            ) > 1.0
+        ):
+            raise PipelineError(
+                f"Video generator did not create a fresh {variant['name']} output: {video}"
+            )
+        outputs.append(video)
+    return str(outputs[0])
 
 
 def stage_cache_status(stage: str, config: dict[str, Any]) -> tuple[bool, str]:
@@ -3012,52 +3303,69 @@ def stage_cache_status(stage: str, config: dict[str, Any]) -> tuple[bool, str]:
         problems = validate_illustration_plan(path)
         return not problems, "; ".join(problems) or str(path)
     if stage == "illustrations":
-        illustration_config = config.get("illustrations", {})
-        path = illustration_output_dir(config)
-        problems = validate_illustrations(
-            illustration_plan_path(config),
-            path,
-            illustration_checkpoint_path(config),
-            visual_prompt_checkpoint_path(config),
-            expected_model=str(illustration_config.get("model", "agnes-image-2.1-flash")),
-            expected_size=str(illustration_config.get("size", "896x1152")),
-            expected_endpoint=str(illustration_config.get("endpoint", "https://apihub.agnes-ai.com/v1/images/generations")),
-            novel_path=resolve_path(config["novel"]["text_path"]),
-            character_cards=character_cards_path(config),
+        variants = illustration_variant_specs(config)
+        problems = []
+        for variant in variants:
+            current = validate_illustrations(
+                illustration_plan_path(config),
+                variant["directory"],
+                variant["checkpoint"],
+                visual_prompt_checkpoint_path(config),
+                **illustration_validation_options(
+                    config,
+                    settings=variant["settings"],
+                    composition_suffix=variant["composition_suffix"],
+                ),
+            )
+            problems.extend(f"{variant['name']}: {problem}" for problem in current)
+        return not problems, "; ".join(problems) or ", ".join(
+            str(variant["directory"]) for variant in variants
         )
-        return not problems, "; ".join(problems) or str(path)
     if stage == "video":
-        path = video_output_path(config)
         audio = mixed_audio_path(config)
         plan_path = illustration_plan_path(config)
-        directory = illustration_output_dir(config)
-        illustration_config = config.get("illustrations", {})
         ffprobe_bin = str(
             config.get("video", {}).get("ffprobe", os.environ.get("FFPROBE_BIN", "ffprobe"))
         )
-        illustration_problems = validate_illustrations(
-            plan_path,
-            directory,
-            illustration_checkpoint_path(config),
-            visual_prompt_checkpoint_path(config),
-            expected_model=str(illustration_config.get("model", "agnes-image-2.1-flash")),
-            expected_size=str(illustration_config.get("size", "896x1152")),
-            expected_endpoint=str(illustration_config.get("endpoint", "https://apihub.agnes-ai.com/v1/images/generations")),
-            novel_path=resolve_path(config["novel"]["text_path"]),
-            character_cards=character_cards_path(config),
+        problems = []
+        for variant in video_variant_specs(config):
+            illustration = variant["illustrations"]
+            path = variant["output"]
+            illustration_problems = validate_illustrations(
+                plan_path,
+                illustration["directory"],
+                illustration["checkpoint"],
+                visual_prompt_checkpoint_path(config),
+                **illustration_validation_options(
+                    config,
+                    settings=illustration["settings"],
+                    composition_suffix=illustration["composition_suffix"],
+                ),
+            )
+            dependencies = [
+                plan_path,
+                audio,
+                *sorted(illustration["directory"].glob("*.png")),
+            ]
+            valid = (
+                not illustration_problems
+                and nonempty_file(path)
+                and nonempty_file(audio)
+                and dependencies_are_older(path, dependencies)
+                and abs(
+                    media_duration_seconds(path, ffprobe_bin)
+                    - media_duration_seconds(audio, ffprobe_bin)
+                ) <= 1.0
+            )
+            if not valid:
+                problems.extend(
+                    f"{variant['name']}: {problem}" for problem in illustration_problems
+                )
+                if not illustration_problems:
+                    problems.append(f"{variant['name']}: video is missing, stale, or has wrong duration")
+        return not problems, "; ".join(problems) or ", ".join(
+            str(variant["output"]) for variant in video_variant_specs(config)
         )
-        dependencies = [plan_path, audio, *sorted(directory.glob("*.png"))]
-        valid = (
-            not illustration_problems
-            and nonempty_file(path)
-            and nonempty_file(audio)
-            and dependencies_are_older(path, dependencies)
-            and abs(
-                media_duration_seconds(path, ffprobe_bin)
-                - media_duration_seconds(audio, ffprobe_bin)
-            ) <= 1.0
-        )
-        return valid, "; ".join(illustration_problems) or str(path)
     raise ValueError(stage)
 
 
@@ -3401,7 +3709,11 @@ def main(argv: list[str] | None = None) -> int:
                 lambda: step_illustrations(config),
                 lambda result: [
                     result,
-                    illustration_checkpoint_path(config),
+                    *[
+                        path
+                        for variant in illustration_variant_specs(config)
+                        for path in (variant["directory"], variant["checkpoint"])
+                    ],
                     visual_prompt_checkpoint_path(config),
                 ],
             )
@@ -3410,7 +3722,10 @@ def main(argv: list[str] | None = None) -> int:
                 recorder,
                 "video",
                 lambda: step_video(config),
-                lambda result: [result],
+                lambda result: [
+                    result,
+                    *[variant["output"] for variant in video_variant_specs(config)],
+                ],
             )
     except KeyboardInterrupt:
         stop_streaming_tts_worker(streaming_tts_process)

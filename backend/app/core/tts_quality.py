@@ -7,7 +7,7 @@ from typing import Any
 
 
 TTS_CHUNKING_VERSION = 1
-TTS_CONTROL_VERSION = 1
+TTS_CONTROL_VERSION = 2
 
 _SEMANTIC_RE = re.compile(r"[\u3400-\u9fffA-Za-z0-9]")
 _SENTENCE_BREAKS = frozenset("。！？!?；;")
@@ -91,7 +91,14 @@ _STYLE_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def _pace(control: str) -> str:
+def _pace(control: str, pace_hint: str = "") -> str:
+    structured = str(pace_hint or "").strip().lower()
+    if structured in {"very_slow", "slow"}:
+        return "语速舒缓"
+    if structured in {"fast", "brisk"}:
+        return "语速稍快"
+    if structured in {"measured", "natural", "variable"}:
+        return "节奏适中"
     if any(token in control for token in ("舒缓", "缓慢", "放慢", "稍缓", "从容", "不急促")):
         return "语速舒缓"
     cleaned = control.replace("不急促", "")
@@ -105,6 +112,7 @@ def compact_performance_control(
     *,
     speaker: str = "",
     emotion: str = "",
+    pace_hint: str = "",
     max_chars: int = 32,
 ) -> str:
     """Reduce verbose directing prose to a safe, non-quoting VoxCPM prefix."""
@@ -129,7 +137,11 @@ def compact_performance_control(
         styles.append("轻声")
     elif "大声" in source or "高声" in source or "响亮" in source:
         styles.append("音量稍高")
-    styles.append(_pace(source))
+    # The director emits a constrained structured pace field. Prefer it over
+    # prose such as "节奏稍缓" or "不急促": those phrases appeared in many
+    # otherwise ``measured`` directions and previously collapsed 75.8% of the
+    # novel into the much stronger "语速舒缓" instruction.
+    styles.append(_pace(source, pace_hint))
     output = "，".join(dict.fromkeys(styles))
     limit = max(12, int(max_chars))
     while len(output) > limit and len(styles) > 2:
@@ -160,7 +172,13 @@ def duration_quality_bounds(
     min_ratio: float = 0.92,
     max_ratio: float = 2.5,
 ) -> dict[str, Any]:
-    """Estimate a strict but achievable spoken-duration envelope."""
+    """Estimate a spoken-duration envelope without prescribing exact timing.
+
+    ``expected`` remains useful for diagnostics and the upper leak guard.  The
+    lower bound is intentionally only an anomaly detector: VoxCPM owns the
+    performance tempo, and a valid take must never be time-stretched merely to
+    match this estimate.
+    """
     value = str(text)
     semantic = max(1, semantic_char_count(value))
     pace = _pace(str(control))

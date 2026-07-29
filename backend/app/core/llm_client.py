@@ -514,6 +514,13 @@ class LLMClient:
                 raise InsufficientQuota(f"HTTP 400: {error_body}")
             if response.status_code in {401, 403}:
                 raise InvalidCredentials(f"HTTP {response.status_code} on {model}: {error_body}")
+            # SenseNova can return a short-lived, account-specific 404 even
+            # while the same model is working on the other accounts.  Treat
+            # only that explicit routing response as retryable so ``chat``
+            # rotates to the next key.  A genuine bad endpoint/model 404
+            # remains fatal instead of being hidden by endless rotation.
+            if response.status_code == 404 and _looks_like_model_route_error(error_body):
+                raise RetryableError(f"HTTP 404 on {model}: {error_body}")
             if response.status_code in {400, 404, 422}:
                 raise FatalLLMError(f"HTTP {response.status_code} on {model}: {error_body}")
             if response.status_code >= 500:
@@ -618,6 +625,17 @@ def _looks_like_quota_error(text: str) -> bool:
             "billing",
             "balance",
             "credit",
+        )
+    )
+
+
+def _looks_like_model_route_error(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "model route not found",
+            "model_route_not_found",
         )
     )
 

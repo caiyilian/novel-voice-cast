@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import queue
 import sys
 from pathlib import Path
 
@@ -47,6 +48,9 @@ class FakeSession:
 def image_payload(content=b"png-bytes"):
     encoded = base64.b64encode(content).decode("ascii")
     return {"data": [{"b64_json": encoded}]}
+
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\nlocal-image"
 
 
 def test_load_api_key_prefers_environment_and_supports_key_file(tmp_path):
@@ -124,6 +128,40 @@ def test_retry_is_exponential_respects_retry_after_and_redacts_key(caplog):
     }
     assert "metaphor" in session.posts[0][1]["json"]["prompt"]
     assert secret not in caplog.text
+
+
+def test_local_form_client_sends_expected_fields_and_accepts_raw_png():
+    session = FakeSession([FakeResponse(content=PNG_BYTES, headers={"Content-Type": "image/png"})])
+    client = gi.LocalImageClient(
+        endpoint="http://127.0.0.1:8000/generate",
+        model="local-image",
+        size="896x1152",
+        steps=25,
+        cfg=7.0,
+        negative_prompt="bad anatomy, text",
+        seed=-1,
+        session=session,
+        sleep_fn=lambda _seconds: None,
+        interval_min=0,
+        interval_max=0,
+    )
+
+    result = client.generate("anime wheat field")
+
+    assert result.content == PNG_BYTES
+    assert result.source == "raw-png"
+    assert session.posts[0][0] == "http://127.0.0.1:8000/generate"
+    assert session.posts[0][1]["data"] == {
+        "prompt": gi.build_generation_prompt("anime wheat field"),
+        "neg_prompt": "bad anatomy, text",
+        "steps": 25,
+        "cfg": 7.0,
+        "height": 1152,
+        "width": 896,
+        "seed": -1,
+    }
+    assert "json" not in session.posts[0][1]
+    assert client.generation_settings["steps"] == 25
 
 
 def test_checkpoint_tracks_each_state_and_resume_handles_url(tmp_path):
@@ -212,6 +250,77 @@ def test_checkpoint_tracks_each_state_and_resume_handles_url(tmp_path):
     assert Path(resumed["images"][1]["output_file"]).read_bytes() == b"second-image"
     assert not list(tmp_path.rglob("*.tmp"))
 
+
+def test_streaming_audit_generates_portrait_then_landscape_with_independent_checkpoints(tmp_path):
+    plan = [{"title": "scene", "prompt": "unreviewed prompt"}]
+    audit = {
+        "illustration_index": 0,
+        "audited_prompt": "Holo and Lawrence beside a wheat cart",
+    }
+    items = queue.Queue()
+    items.put((0, audit))
+    items.put(gi.AUDIT_QUEUE_DONE)
+    call_order = []
+
+    portrait_session = FakeSession(
+        [FakeResponse(content=PNG_BYTES + b"-portrait", headers={"Content-Type": "image/png"})],
+        before_post=lambda: call_order.append("portrait"),
+    )
+    landscape_session = FakeSession(
+        [FakeResponse(content=PNG_BYTES + b"-landscape", headers={"Content-Type": "image/png"})],
+        before_post=lambda: call_order.append("landscape"),
+    )
+    portrait = gi.LocalImageClient(
+        size="896x1152",
+        session=portrait_session,
+        interval_min=0,
+        interval_max=0,
+    )
+    landscape = gi.LocalImageClient(
+        size="1280x720",
+        session=landscape_session,
+        interval_min=0,
+        interval_max=0,
+    )
+    targets = [
+        gi.GenerationTarget(
+            "portrait",
+            portrait,
+            tmp_path / "portrait",
+            tmp_path / "portrait.json",
+            "vertical 7:9 frame",
+        ),
+        gi.GenerationTarget(
+            "landscape",
+            landscape,
+            tmp_path / "landscape",
+            tmp_path / "landscape.json",
+            "cinematic 16:9 frame",
+        ),
+    ]
+
+    checkpoints = gi.run_streaming_audited_generation(
+        plan,
+        targets=targets,
+        audited_items=items,
+        audit_errors=[],
+        audit_source_hash="audit-source",
+        resume=True,
+    )
+
+    assert call_order == ["portrait", "landscape"]
+    assert portrait_session.posts[0][1]["data"]["width"] == 896
+    assert portrait_session.posts[0][1]["data"]["height"] == 1152
+    assert landscape_session.posts[0][1]["data"]["width"] == 1280
+    assert landscape_session.posts[0][1]["data"]["height"] == 720
+    assert checkpoints["portrait"]["source_hash"] == gi.generation_source_hash(plan)
+    assert checkpoints["portrait"]["audit_source_hash"] == "audit-source"
+    assert checkpoints["portrait"]["images"][0]["status"] == "success"
+    assert checkpoints["landscape"]["images"][0]["status"] == "success"
+    assert (
+        checkpoints["portrait"]["images"][0]["prompt_hash"]
+        != checkpoints["landscape"]["images"][0]["prompt_hash"]
+    )
 
 def test_legacy_checkpoint_cannot_mark_pulid_images_as_agnes_success(tmp_path):
     list_plan = tmp_path / "list-plan.json"

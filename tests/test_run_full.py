@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 import wave
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,16 @@ def test_run_checked_subprocess_streams_output_and_reports_failure(capsys):
     assert "visible progress" in capsys.readouterr().out
 
 
+def test_run_checked_subprocess_returns_explicitly_allowed_exit_code():
+    returncode = run_full.run_checked_subprocess(
+        [sys.executable, "-c", "import sys; sys.exit(75)"],
+        timeout=10,
+        allowed_returncodes={75},
+    )
+
+    assert returncode == 75
+
+
 def test_execute_stage_records_keyboard_interrupt(tmp_path):
     recorder = run_full.PipelineRecorder(tmp_path / "manifest.json", ["tts"])
 
@@ -76,19 +87,141 @@ def test_bgm_generator_cli_import_does_not_change_working_directory(tmp_path, mo
     assert Path.cwd() == tmp_path
 
 
-def test_bgm_generator_defaults_to_dit_offload_for_cpu_offload(monkeypatch):
+def test_bgm_generator_defaults_to_resident_turbo_and_couples_dit_offload(monkeypatch):
     from scripts import run_bgm_generate
 
     monkeypatch.delenv("ACESTEP_CPU_OFFLOAD", raising=False)
     monkeypatch.delenv("ACESTEP_OFFLOAD_DIT_TO_CPU", raising=False)
-    assert run_bgm_generate._resolve_offload_policy() == (True, True)
+    assert run_bgm_generate._resolve_offload_policy() == (False, False)
 
+    monkeypatch.setenv("ACESTEP_CPU_OFFLOAD", "true")
     monkeypatch.setenv("ACESTEP_OFFLOAD_DIT_TO_CPU", "false")
     assert run_bgm_generate._resolve_offload_policy() == (True, False)
 
     monkeypatch.setenv("ACESTEP_CPU_OFFLOAD", "false")
     monkeypatch.setenv("ACESTEP_OFFLOAD_DIT_TO_CPU", "true")
     assert run_bgm_generate._resolve_offload_policy() == (False, False)
+
+
+def test_bgm_noise_guard_separates_tone_from_broadband_pulses():
+    import numpy as np
+    from scripts import run_bgm_generate
+
+    sample_rate = 8_000
+    seconds = 3
+    timeline = np.arange(sample_rate * seconds, dtype=np.float32) / sample_rate
+    musical = (
+        0.45 * np.sin(2 * np.pi * 220 * timeline)
+        + 0.25 * np.sin(2 * np.pi * 330 * timeline)
+    )
+    rng = np.random.default_rng(99)
+    noisy_pulses = rng.normal(0, 0.25, musical.shape).astype(np.float32)
+    pulse = np.zeros_like(noisy_pulses)
+    pulse[:: sample_rate // 4] = 1.0
+    noisy_pulses += np.convolve(pulse, np.ones(240, dtype=np.float32), mode="same")
+
+    music_flatness, music_harmonicity = run_bgm_generate._music_quality_metrics(
+        musical, sample_rate
+    )
+    noise_flatness, noise_harmonicity = run_bgm_generate._music_quality_metrics(
+        noisy_pulses, sample_rate
+    )
+
+    assert music_flatness < run_bgm_generate.MAX_NOISE_SPECTRAL_FLATNESS
+    assert noise_flatness > music_flatness
+    assert music_harmonicity > noise_harmonicity
+
+
+def test_bgm_generator_synchronizes_around_dit_offload():
+    from scripts import run_bgm_generate
+
+    events = []
+
+    class Handler:
+        offload_to_cpu = True
+        offload_dit_to_cpu = True
+
+        @contextmanager
+        def _load_model_context(self, model_name):
+            events.append(f"load:{model_name}")
+            try:
+                yield
+            finally:
+                events.append(f"offload:{model_name}")
+
+    handler = Handler()
+    assert run_bgm_generate._install_model_offload_sync_guard(
+        handler,
+        synchronize=lambda: events.append("synchronize"),
+    )
+
+    with handler._load_model_context("model"):
+        events.append("work")
+
+    assert events == [
+        "load:model",
+        "work",
+        "synchronize",
+        "offload:model",
+        "synchronize",
+    ]
+
+
+def test_resumable_bgm_subprocess_restarts_after_checkpoint_progress(monkeypatch, tmp_path):
+    returncodes = iter([
+        run_full.BGM_PROCESS_RESTART_EXIT_CODE,
+        run_full.WINDOWS_ACCESS_VIOLATION_EXIT_CODE,
+        0,
+    ])
+    progress = iter([440, 460, 461])
+    calls = []
+
+    monkeypatch.setattr(
+        run_full,
+        "run_checked_subprocess",
+        lambda command, *args, **kwargs: calls.append(
+            (list(command), kwargs["allowed_returncodes"])
+        ) or next(returncodes),
+    )
+    monkeypatch.setattr(
+        run_full,
+        "_bgm_checkpoint_clip_count",
+        lambda _path: next(progress),
+    )
+
+    run_full.run_resumable_bgm_subprocess(
+        ["ace-step", "--force"],
+        timeout=10,
+        manifest_path=tmp_path / "manifest.json",
+    )
+
+    assert len(calls) == 3
+    assert "--force" in calls[0][0]
+    assert all("--force" not in command for command, _allowed in calls[1:])
+    assert all(
+        run_full.BGM_PROCESS_RESTART_EXIT_CODE in allowed
+        for _command, allowed in calls
+    )
+
+
+def test_resumable_bgm_subprocess_stops_after_repeated_native_crash_without_progress(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(
+        run_full,
+        "run_checked_subprocess",
+        lambda *args, **kwargs: run_full.WINDOWS_ACCESS_VIOLATION_EXIT_CODE,
+    )
+    monkeypatch.setattr(run_full, "_bgm_checkpoint_clip_count", lambda _path: 440)
+
+    with pytest.raises(run_full.PipelineError, match=r"without checkpoint progress \(3 attempts\)"):
+        run_full.run_resumable_bgm_subprocess(
+            ["ace-step"],
+            timeout=10,
+            manifest_path=tmp_path / "manifest.json",
+            native_no_progress_limit=3,
+        )
 
 
 def test_bgm_manifest_uses_requested_output_directory(tmp_path):
@@ -251,6 +384,42 @@ def test_load_config_resolves_repo_paths_independent_of_cwd(tmp_path, monkeypatc
 
     assert Path(config["output"]["dir"]) == run_full.ROOT / "output"
     assert run_full.BACKEND_DIR == run_full.ROOT / "backend"
+
+
+def test_illustration_and_video_variant_specs_keep_outputs_independent(tmp_path):
+    config = make_config(tmp_path)
+    config["illustrations"] = {
+        "output_dir": str(tmp_path / "portrait"),
+        "checkpoint_path": str(tmp_path / "portrait.json"),
+        "size": "896x1152",
+        "landscape": {
+            "enabled": True,
+            "size": "1280x720",
+            "output_dir": str(tmp_path / "landscape"),
+            "checkpoint_path": str(tmp_path / "landscape.json"),
+        },
+    }
+    config["video"] = {
+        "output_path": str(tmp_path / "portrait.mp4"),
+        "subtitle_path": str(tmp_path / "portrait.srt"),
+        "landscape": {
+            "enabled": True,
+            "output_path": str(tmp_path / "landscape.mp4"),
+            "subtitle_path": str(tmp_path / "landscape.srt"),
+        },
+    }
+
+    image_variants = run_full.illustration_variant_specs(config)
+    video_variants = run_full.video_variant_specs(config)
+
+    assert [item["name"] for item in image_variants] == ["portrait", "landscape"]
+    assert [item["settings"]["size"] for item in image_variants] == ["896x1152", "1280x720"]
+    assert image_variants[0]["directory"] != image_variants[1]["directory"]
+    assert image_variants[0]["checkpoint"] != image_variants[1]["checkpoint"]
+    assert [item["output"] for item in video_variants] == [
+        tmp_path / "portrait.mp4",
+        tmp_path / "landscape.mp4",
+    ]
 
 
 def test_voice_assignment_uses_voxcpm_only_for_configured_characters(tmp_path):
@@ -470,6 +639,7 @@ def test_illustration_cache_binds_audited_plan_novel_cards_and_endpoint(tmp_path
     from scripts.generate_illustrations import (
         CHECKPOINT_VERSION,
         apply_audited_prompts,
+        generation_prompt_hash,
         generation_source_hash,
     )
 
@@ -522,11 +692,13 @@ def test_illustration_cache_binds_audited_plan_novel_cards_and_endpoint(tmp_path
             "model": "agnes-image-2.1-flash",
             "endpoint": endpoint,
             "size": "896x1152",
-            "source_hash": generation_source_hash(audited_plan),
+            "source_hash": generation_source_hash(plan),
+            "audit_source_hash": source_hash,
             "images": [{
                 "index": 0,
                 "status": "success",
                 "output_file": str(image_path),
+                "prompt_hash": generation_prompt_hash(audited_plan[0]["prompt"]),
             }],
         }),
         encoding="utf-8",
@@ -661,6 +833,10 @@ def test_voxcpm_child_script_compiles_and_reuses_reference_cache(tmp_path):
     assert "prompt_cache=prompt_caches[reference]" in script
     assert "max_len=4096" in script
     assert "badcase remained after retries" in script
+    assert "audio is anomalously fast; retrying a fresh VoxCPM take" in script
+    assert "correct_fast_audio" not in script
+    assert "atempo=" not in script
+    assert ".tempo.wav" not in script
     assert "os.replace(temporary_wav, task[\"output_path\"])" in script
     assert '"wav_sha256": file_sha256(path)' in script
     assert "if False:" in script  # normalize defaults off, matching VoxCPM's public API
