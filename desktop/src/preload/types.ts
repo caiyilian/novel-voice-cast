@@ -26,6 +26,33 @@ export type PipelineStatus =
   | "failed"
   | "completed"
 
+export type StageRuntimeStatus =
+  | "pending"
+  | "not-selected"
+  | "running"
+  | "complete"
+  | "skipped"
+  | "failed"
+  | "interrupted"
+
+export interface StageRuntime {
+  name: PipelineStage
+  index: number
+  status: StageRuntimeStatus
+  percent: number
+  operation: string
+  elapsedSeconds: number
+}
+
+export interface PipelineLogEntry {
+  id: number
+  timestamp: string
+  level: string
+  message: string
+  stream: "stdout" | "stderr" | "structured"
+  stage: PipelineStage | null
+}
+
 export interface PipelineStartRequest {
   novelPath: string
   labelsPath: string
@@ -46,6 +73,12 @@ export interface PipelineSnapshot {
   exitCode: number | null
   error: string | null
   request: PipelineStartRequest | null
+  currentStage: PipelineStage | null
+  currentStageIndex: number | null
+  stagePercent: number
+  operation: string
+  stages: StageRuntime[]
+  logs: PipelineLogEntry[]
 }
 
 export type PipelineEvent =
