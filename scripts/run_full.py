@@ -6,6 +6,7 @@ it, and records timing/artifacts in ``output/run_full_manifest.json``.
 """
 from __future__ import annotations
 
+import _thread
 import argparse
 import asyncio
 import hashlib
@@ -106,6 +107,47 @@ DESKTOP_EVENTS = DesktopEventEmitter()
 
 class PipelineError(RuntimeError):
     """A stage failed or produced an invalid artifact."""
+
+
+class StopFileWatcher:
+    """Turn a desktop stop-file request into a main-thread KeyboardInterrupt."""
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        interrupt: Callable[[], Any] = _thread.interrupt_main,
+        poll_seconds: float = 0.2,
+    ):
+        self.path = path
+        self.interrupt = interrupt
+        self.poll_seconds = max(0.02, float(poll_seconds))
+        self._stopped = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+
+        def watch() -> None:
+            while not self._stopped.wait(self.poll_seconds):
+                if not self.path.is_file():
+                    continue
+                DESKTOP_EVENTS.log("WARNING", f"收到桌面停止请求：{self.path}")
+                self.interrupt()
+                return
+
+        self._thread = threading.Thread(
+            target=watch,
+            name="desktop-stop-file-watcher",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stopped.set()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=max(1.0, self.poll_seconds * 2))
 
 
 def utc_now() -> str:
@@ -3572,6 +3614,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit versioned [STAGE], [PROGRESS], and [LOG] JSON lines",
     )
+    parser.add_argument(
+        "--stop-file",
+        help="Interrupt the main thread when this desktop-owned file appears",
+    )
     return parser
 
 
@@ -3612,6 +3658,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if dry_run_report(config, selected) else 1
 
     recorder = PipelineRecorder(output_dir(config) / "run_full_manifest.json", selected)
+    stop_watcher = StopFileWatcher(resolve_path(args.stop_file)) if args.stop_file else None
+    if stop_watcher is not None:
+        stop_watcher.start()
     total_started = time.monotonic()
     parsed: tuple[list[dict], list[str], str] | None = None
     gender_results: dict[str, Any] | None = None
@@ -3866,6 +3915,8 @@ def main(argv: list[str] | None = None) -> int:
                 ],
             )
     except KeyboardInterrupt:
+        if stop_watcher is not None:
+            stop_watcher.stop()
         stop_streaming_tts_worker(streaming_tts_process)
         recorder.data["run_status"] = "interrupted"
         recorder.data["run_error"] = "interrupted by user"
@@ -3876,6 +3927,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Run manifest: {recorder.path}")
         return 130
     except Exception as exc:
+        if stop_watcher is not None:
+            stop_watcher.stop()
         stop_streaming_tts_worker(streaming_tts_process)
         recorder.data["run_status"] = "failed"
         recorder.data["run_error"] = str(exc)
@@ -3887,6 +3940,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Run manifest: {recorder.path}")
         return 1
 
+    if stop_watcher is not None:
+        stop_watcher.stop()
     stop_streaming_tts_worker(streaming_tts_process)
     recorder.finish()
     DESKTOP_EVENTS.log(

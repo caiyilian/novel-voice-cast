@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import yaml
@@ -132,6 +133,24 @@ def test_input_overrides_are_in_memory_only_and_resolve_chinese_paths(tmp_path):
         "labels_path": str(labels.resolve()),
     }
     assert yaml.safe_load(config_path.read_text(encoding="utf-8")) == original
+
+
+def test_stop_file_watcher_interrupts_once_and_stops_cleanly(tmp_path):
+    requested = threading.Event()
+    calls = []
+    stop_file = tmp_path / "desktop.stop"
+    watcher = run_full.StopFileWatcher(
+        stop_file,
+        interrupt=lambda: (calls.append("interrupt"), requested.set()),
+        poll_seconds=0.02,
+    )
+
+    watcher.start()
+    stop_file.write_text("stop", encoding="utf-8")
+    assert requested.wait(timeout=2)
+    watcher.stop()
+
+    assert calls == ["interrupt"]
 
 
 def test_real_parse_only_cli_emits_all_desktop_event_types(tmp_path):
