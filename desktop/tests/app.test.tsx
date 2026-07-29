@@ -3,10 +3,12 @@ import { render } from "solid-js/web"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type {
   NovelVoiceCastAPI,
+  PipelineEvent,
   PipelineSnapshot,
   SelectedTextFile,
 } from "../src/preload/types"
 import { App, stages } from "../src/renderer/App"
+import { createStageRuntime } from "../src/main/pipeline-events"
 
 let dispose: (() => void) | undefined
 
@@ -38,10 +40,17 @@ const idlePipeline: PipelineSnapshot = {
   exitCode: null,
   error: null,
   request: null,
+  currentStage: null,
+  currentStageIndex: null,
+  stagePercent: 0,
+  operation: "等待开始",
+  stages: createStageRuntime(),
+  logs: [],
 }
 
 describe("desktop input shell", () => {
   it("shows all stages and only enables start after both pickers succeed", async () => {
+    let listener: ((event: PipelineEvent) => void) | undefined
     const api: NovelVoiceCastAPI = {
       platform: "win32",
       versions: { electron: "43.2.0", chrome: "142" },
@@ -58,7 +67,10 @@ describe("desktop input shell", () => {
         request,
       })),
       stopPipeline: vi.fn(async () => ({ ...idlePipeline, status: "stopping" as const })),
-      onPipelineEvent: vi.fn(() => () => undefined),
+      onPipelineEvent: vi.fn((callback) => {
+        listener = callback
+        return () => undefined
+      }),
     }
     Object.defineProperty(window, "novelVoiceCast", { value: api, configurable: true })
     const container = document.createElement("div")
@@ -96,5 +108,38 @@ describe("desktop input shell", () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(api.stopPipeline).toHaveBeenCalledOnce()
     expect(container.textContent).toContain("正在停止")
+
+    listener?.({
+      type: "state",
+      state: {
+        ...idlePipeline,
+        status: "running",
+        currentStage: "tts",
+        currentStageIndex: 5,
+        stagePercent: 42.5,
+        operation: "已生成语音：1286/3026",
+        stages: createStageRuntime().map((stage) => (
+          stage.name === "tts" ? { ...stage, status: "running", percent: 42.5 } : stage
+        )),
+        logs: [{
+          id: 1,
+          timestamp: "2026-07-30T00:00:00.000Z",
+          level: "INFO",
+          message: "正在生成赫萝语音",
+          stream: "structured",
+          stage: "tts",
+        }],
+      },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(container.textContent).toContain("5. 语音 · 42.5%")
+    expect(container.textContent).toContain("已生成语音：1286/3026")
+    expect(container.textContent).toContain("正在生成赫萝语音")
+
+    const clearLogs = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("清空显示"),
+    )
+    clearLogs?.click()
+    expect(container.textContent).not.toContain("正在生成赫萝语音")
   })
 })
