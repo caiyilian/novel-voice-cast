@@ -46,6 +46,11 @@ const idlePipeline: PipelineSnapshot = {
   operation: "等待开始",
   stages: createStageRuntime(),
   logs: [],
+  totalElapsedSeconds: 0,
+  manifestStatus: "not-read",
+  manifestMessage: "尚未读取 manifest",
+  artifacts: [],
+  outputDirectoryAvailable: false,
 }
 
 describe("desktop input shell", () => {
@@ -67,6 +72,7 @@ describe("desktop input shell", () => {
         request,
       })),
       stopPipeline: vi.fn(async () => ({ ...idlePipeline, status: "stopping" as const })),
+      openOutputDirectory: vi.fn(async () => ({ ok: true, error: null })),
       onPipelineEvent: vi.fn((callback) => {
         listener = callback
         return () => undefined
@@ -141,5 +147,35 @@ describe("desktop input shell", () => {
     )
     clearLogs?.click()
     expect(container.textContent).not.toContain("正在生成赫萝语音")
+
+    listener?.({
+      type: "state",
+      state: {
+        ...idlePipeline,
+        status: "completed",
+        outputDirectory: "E:/project/output",
+        outputDirectoryAvailable: true,
+        totalElapsedSeconds: 3661,
+        manifestStatus: "valid",
+        manifestMessage: "manifest 已确认本次流水线完整完成",
+        artifacts: [
+          { path: "E:/project/output/final.mp4", exists: true },
+          { path: "E:/project/output/missing.mp3", exists: false },
+        ],
+        stages: createStageRuntime().map((stage) => (
+          stage.name === "parse" ? { ...stage, status: "complete", percent: 100, elapsedSeconds: 1.2 } : stage
+        )),
+      },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(container.textContent).toContain("总耗时：1 小时 1 分 1 秒")
+    expect(container.textContent).toContain("final.mp4")
+    expect(container.textContent).toContain("缺失")
+    const openOutput = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("打开输出目录"),
+    )
+    openOutput?.click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(api.openOutputDirectory).toHaveBeenCalledOnce()
   })
 })

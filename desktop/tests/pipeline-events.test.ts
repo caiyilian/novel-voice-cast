@@ -27,6 +27,11 @@ function snapshot(): PipelineSnapshot {
     operation: "等待开始",
     stages: createStageRuntime(),
     logs: [],
+    totalElapsedSeconds: 0,
+    manifestStatus: "not-read",
+    manifestMessage: "尚未读取 manifest",
+    artifacts: [],
+    outputDirectoryAvailable: false,
   }
 }
 
