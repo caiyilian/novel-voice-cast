@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -130,4 +130,111 @@ describe.skipIf(!existsSync(python))("real parse-only pipeline controller", () =
     expect(outputLines.some((line) => line.startsWith("[STAGE]"))).toBe(true)
     expect(resolveProjectPaths(ROOT, configPath)).toMatchObject({ python, output })
   }, 40_000)
+
+  it("stops only its slow fixture process and resumes from its checkpoint", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nvc-stop-resume-"))
+    temporaryDirectories.push(root)
+    const output = join(root, "output")
+    const scripts = join(root, "scripts")
+    await Promise.all([mkdir(output), mkdir(scripts)])
+    const novelPath = join(root, "novel.txt")
+    const labelsPath = join(root, "labels.txt")
+    const configPath = join(root, "config.yaml")
+    await writeFile(novelPath, "第一章\n「你好。」\n", "utf8")
+    await writeFile(labelsPath, "甲\n", "utf8")
+    await writeFile(configPath, `output:\n  dir: ${JSON.stringify(output)}\n`, "utf8")
+    await writeFile(join(scripts, "run_full.py"), `
+import argparse, json, sys, time
+from datetime import datetime, timezone
+from pathlib import Path
+
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument("--stop-file")
+args, _ = parser.parse_known_args()
+root = Path(__file__).resolve().parents[1]
+output = root / "output"
+manifest_path = output / "run_full_manifest.json"
+checkpoint = output / "slow-fixture.checkpoint"
+started = datetime.now(timezone.utc).isoformat()
+
+def write_manifest(status, stage_status=None):
+    payload = {
+        "version": 1,
+        "root": str(root),
+        "selected_stages": ["parse"],
+        "run_started_at": started,
+        "run_status": status,
+        "stages": {},
+    }
+    if stage_status:
+        payload["run_finished_at"] = datetime.now(timezone.utc).isoformat()
+        payload["stages"]["parse"] = {
+            "status": stage_status,
+            "elapsed_seconds": 0.2,
+            "artifacts": [],
+        }
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+def stage(status):
+    print("[STAGE] " + json.dumps({
+        "version": 1,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "stage": "parse",
+        "index": 1,
+        "total": 13,
+        "status": status,
+        "elapsed_seconds": 0.2 if status != "running" else 0,
+        "operation": "慢任务测试",
+    }), flush=True)
+
+write_manifest("running")
+stage("running")
+if checkpoint.exists():
+    write_manifest("complete", "complete")
+    stage("complete")
+    raise SystemExit(0)
+for _ in range(600):
+    if Path(args.stop_file).exists():
+        checkpoint.write_text("resume", encoding="utf-8")
+        write_manifest("interrupted", "interrupted")
+        stage("interrupted")
+        raise SystemExit(130)
+    time.sleep(0.05)
+raise SystemExit(3)
+`, "utf8")
+
+    let resolveTerminal: ((state: PipelineSnapshot) => void) | undefined
+    const nextTerminal = () => new Promise<PipelineSnapshot>((resolveState) => {
+      resolveTerminal = resolveState
+    })
+    const controller = new PipelineController({
+      projectRoot: root,
+      configPath,
+      pythonPath: python,
+      stopGraceMilliseconds: 2_000,
+      publish: (event) => {
+        if (event.type === "state" && ["completed", "failed", "interrupted"].includes(event.state.status)) {
+          resolveTerminal?.(event.state)
+          resolveTerminal = undefined
+        }
+      },
+    })
+    const request = { novelPath, labelsPath, fromStage: "parse" as const, toStage: "parse" as const }
+
+    const interruptedPromise = nextTerminal()
+    await controller.start(request)
+    await new Promise((resolveWait) => setTimeout(resolveWait, 200))
+    expect((await controller.stop()).status).toBe("stopping")
+    const interrupted = await interruptedPromise
+    expect(interrupted.status).toBe("interrupted")
+    expect(interrupted.manifestStatus).toBe("valid")
+    expect(existsSync(join(output, "slow-fixture.checkpoint"))).toBe(true)
+
+    const resumedPromise = nextTerminal()
+    await controller.start(request)
+    const resumed = await resumedPromise
+    expect(resumed.status).toBe("completed")
+    expect(resumed.manifestStatus).toBe("valid")
+    expect(resumed.stages[0]).toMatchObject({ status: "complete", percent: 100 })
+  }, 20_000)
 })

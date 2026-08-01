@@ -5,17 +5,26 @@
   "type": "module",
   "description": "Secure Electron desktop runner for the Novel Voice Cast pipeline",
   "author": "caiyilian",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/caiyilian/novel-voice-cast.git"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "postinstall": "npm run prepare:electron",
     "prepare:electron": "cross-env ELECTRON_GET_USE_PROXY=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ install-electron",
     "dev": "npm run prepare:electron && electron-vite dev",
     "build": "electron-vite build",
+    "verify:fixture": "node scripts/verify-fixture.mjs",
+    "verify:versions": "node scripts/verify-versions.mjs",
+    "verify": "npm run verify:fixture && npm run verify:versions && npm run typecheck && npm test && npm run build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "package:dir": "npm run prepare:electron && npm run build && cross-env ELECTRON_GET_USE_PROXY=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --dir --config electron-builder.config.ts",
-    "package:win": "npm run prepare:electron && npm run build && cross-env ELECTRON_GET_USE_PROXY=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --win nsis --config electron-builder.config.ts"
+    "package:win": "npm run prepare:electron && npm run build && cross-env ELECTRON_GET_USE_PROXY=true ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --win nsis --publish never --config electron-builder.config.ts",
+    "package:verify": "npm run package:win && node scripts/verify-package.mjs",
+    "smoke:win": "node scripts/smoke-win.mjs"
   },
   "dependencies": {
     "solid-js": "1.9.14",
