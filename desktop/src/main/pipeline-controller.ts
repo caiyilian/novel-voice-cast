@@ -27,6 +27,7 @@ const RUNNING_STATES = new Set(["starting", "running", "stopping"])
 export interface PipelineControllerOptions {
   projectRoot?: string
   configPath?: string
+  pythonPath?: string
   stopGraceMilliseconds?: number
   publish?: (event: PipelineEvent) => void
 }
@@ -164,7 +165,11 @@ export class PipelineController {
       novelPath: novel.file.path,
       labelsPath: labels.file.path,
     }
-    const paths = resolveProjectPaths(this.options.projectRoot, this.options.configPath)
+    const paths = resolveProjectPaths(
+      this.options.projectRoot,
+      this.options.configPath,
+      this.options.pythonPath,
+    )
     const runId = `${process.pid}-${timestampForFilename()}-${randomUUID().slice(0, 8)}`
     const controlDirectory = join(tmpdir(), "novel-voice-cast-desktop")
     await mkdir(controlDirectory, { recursive: true })
