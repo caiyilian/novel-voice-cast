@@ -1,18 +1,31 @@
-# MiniMax H3 原生链式视频集成
+# MiniMax H3 全时长动态视频集成
 
-本项目的 `video` 阶段可以调用独立服务器上的 MiniMax H3 服务，把原来的“静态插图停留”升级为有真实运动的横、竖版视频。默认方案不把 702 张旧插图逐张作为首尾帧，因此旧插图的构图、人物错误和画风波动不会成为 H3 成片的硬约束。
+本项目的 `video` 阶段可以调用独立服务器上的 MiniMax H3 服务，把已经完成的 VoxCPM 人声、ACE-Step BGM、中文字幕和小说时间轴合成为横、竖两个动态长片。当前默认模式是 `continuous-chain`：每一帧都必须由真实动态视频覆盖，合成器不会延长末帧、循环短视频、慢放视频或改变人声速度。
 
-## 默认方案：native-chain
+## 默认方案：continuous-chain
 
-全书仍沿用插图计划的叙事节拍和 BGM 场景划分，但画面由 H3 自己建立和延续：
+全书继续使用 702 个已审核的叙事节拍作为粗镜头，但每个粗镜头会按真实音频时长进一步拆成若干条 5～10 秒微镜头：
 
-1. 每个 BGM 粗场景的第一个叙事节拍使用 T2VA，由审核后的视觉提示词建立新画面；
-2. 同一粗场景内的后续节拍使用 I2VA，以上一条 H3 视频在真实音频边界处提取的续帧为首帧；
-3. 进入下一个粗场景时主动重置为 T2VA，避免错误人物或画面漂移无限传递；
-4. 每个节拍开头播放 H3 动画；如果语音时长超过 H3 片段，则停留在 H3 自己的续帧，而不是切回旧插图；
-5. H3 自带音轨一律丢弃，最终只使用已经完成的 VoxCPM 人声、ACE-Step BGM 和中文字幕。
+1. 微镜头数量由 WAV 时间轴和 H3 的 `17k+5` 帧规则自动计算，不硬编码数量；
+2. 每条记录保存粗镜头、微镜头、覆盖起止时间、动作阶段、镜头方向和画幅构图；
+3. 同一局部动作可用上一条末帧做 I2VA，但链长默认不超过 3 条，之后主动 T2VA 切镜重锚定，避免人物和场景误差无限积累；
+4. 若提供目标尾帧，生成器也支持 L2VA 或 FL2VA；
+5. 下载后会真实解码并检查分辨率、时长、长时间近乎静止和黑屏，不合格时保存指标并更换随机生成结果重试；
+6. 合成前逐帧核对动态覆盖。任意微镜头少一帧都会中止并指出缺口，不会以静帧补齐；
+7. H3 自带音轨全部丢弃，最终音频仍是已经验收的 VoxCPM+BGM 母音频。
 
-当前第一卷共有 702 个叙事节拍和 188 个 BGM 粗场景，因此每种画幅约生成 188 条 T2VA 和 514 条 I2VA。竖屏与横屏使用独立 checkpoint，默认串行执行，避免同时争抢同一台服务器 GPU。
+以当前第一卷 21,665.77 秒音频实测，702 个粗镜头会生成每画幅 2,487 条微镜头，单个粗镜头包含 1～16 条。竖屏和横屏共享语义分镜，但分别使用 7:9 与 16:9 构图指令，并使用独立断点。程序按“竖屏生成及成片 → 横屏生成及成片”串行执行，因此竖屏完成后无需等待横屏即可先得到竖屏成片。
+
+## 旧素材迁移
+
+新模式写入 `output/h3_video_continuous/`，不会删除或覆盖旧 `output/h3_video/`：
+
+- 旧断点中每个粗镜头的第一条视频会重新执行解码和质量检查；
+- 合格视频直接成为新微镜头的候选素材，并在新切点重新提取续写帧；
+- 旧断点里已经提交的 `queued/running job_id` 会转移到新断点继续查询；
+- 服务器若仍保留任务就下载复用；明确返回 404 时才按新提示词重提。
+
+当前旧竖屏 702 条均可进入候选检查；旧横屏已有 72 条本地成功视频，第 73 条任务号也会尝试恢复。旧文件始终保持原位。
 
 ## 配置
 
@@ -20,13 +33,19 @@
 
 ```yaml
 video:
+  output_path: "output/h3_continuous_portrait_7x9_subtitled.mp4"
   h3:
     enabled: true
-    mode: "native-chain"
+    mode: "continuous-chain"
     endpoint: "http://172.31.102.189:8189"
-    output_dir: "output/h3_video"
+    output_dir: "output/h3_video_continuous"
+    reuse_output_dir: "output/h3_video"
+    shot_plan_path: "backend/data/h3_shot_plan.json"
     minimum_duration: 5
     maximum_duration: 10
+    max_chain_length: 3
+    max_freeze_ratio: 0.65
+    max_black_ratio: 0.20
     request_timeout: 60
     poll_seconds: 15
     job_timeout: 14400
@@ -41,12 +60,12 @@ video:
       height: 544
 ```
 
-宽和高必须是 16 的倍数；H3 请求时长必须在 5–15 秒。`maximum_duration: 10` 是当前质量、运动长度和单条耗时之间的保守选择；若服务器验证 15 秒稳定，可以改为 15，但全书耗时会明显增加。
+宽和高必须为 16 的倍数；H3 请求时长必须在 5～15 秒。`maximum_duration: 10` 是当前质量与单条稳定性的保守选择。`max_freeze_ratio` 判断最长近乎静止段占使用区间的比例，`max_black_ratio` 判断黑屏累计比例，两者均可按样片人工复核后调整。
 
 服务需要提供：
 
 - `GET /api/health`
-- `POST /api/generate`：无图片时接收 JSON；I2VA/FL2VA 时接收 multipart 图片
+- `POST /api/generate`：T2VA 使用 JSON；带首帧或尾帧时使用 multipart
 - `GET /api/status/{job_id}`
 - `GET /api/download/{job_id}`
 
@@ -58,57 +77,66 @@ video:
 
 ## 运行与断点续跑
 
-现有音频、插图计划和提示词审核已经完成时，只运行视频阶段：
+现有音频、插图计划和提示词审核完成后，只运行视频阶段：
 
 ```cmd
 cd /d E:\projects\novel-voice-cast
 set "PYTHONUTF8=1"
-.venv\Scripts\python.exe -u scripts\run_full.py --config config\config.yaml --from-stage video --to-stage video --log logs\h3_video.log
+.venv\Scripts\python.exe -u scripts\run_full.py --config config\config.yaml --from-stage video --to-stage video --log logs\h3_continuous_video.log
 ```
 
-可以随时按 `Ctrl+C`。再次执行完全相同的命令会：
+可以随时按 `Ctrl+C`，再次执行相同命令会：
 
-- 复用已经下载并通过分辨率、时长校验的 MP4；
-- 对仍在服务器排队或运行的任务继续查询原 `job_id`，不会因本地断网立即重复提交；
-- 如果服务重启后明确返回 404，才清除旧任务号并使用新随机噪声重提；
-- 复用已经提取的续帧和已经编码的本地分段；
-- 最后重新拼接字幕和现有音频。
+- 先迁移尚未处理的旧候选片段和远程任务号；
+- 复用输入哈希、提示词和依赖帧均匹配的成功微镜头；
+- 对服务器仍在排队或运行的任务继续查询原 `job_id`；
+- 服务器断电或网络中断期间保留任务号并持续等待；
+- 只有服务器恢复后明确返回 404 才重提当前镜头；
+- 复用已经编码完成且指纹匹配的本地粗镜头分段；
+- 全部动态覆盖完成后才压制字幕和母音频。
 
-主要断点：
+主要新断点：
 
 ```text
-output/h3_video/portrait/h3_clips.checkpoint.json
-output/h3_video/portrait/h3_render.checkpoint.json
-output/h3_video/landscape/h3_clips.checkpoint.json
-output/h3_video/landscape/h3_render.checkpoint.json
+backend/data/h3_shot_plan.json
+output/h3_video_continuous/portrait/h3_clips.checkpoint.json
+output/h3_video_continuous/portrait/h3_render.checkpoint.json
+output/h3_video_continuous/landscape/h3_clips.checkpoint.json
+output/h3_video_continuous/landscape/h3_render.checkpoint.json
 ```
 
-默认成片：
+默认新成片：
 
 ```text
-output/h3_video_local_portrait_7x9_subtitled.mp4
-output/h3_video_local_landscape_16x9_subtitled.mp4
+output/h3_continuous_portrait_7x9_subtitled.mp4
+output/h3_continuous_landscape_16x9_subtitled.mp4
 ```
 
-局域网监控页会分别显示横、竖画幅的 H3 片段数、当前 `job_id` 状态、本地编码分段数和基于最近完成速度估算的 ETA：
+## 监控
 
 ```cmd
 .venv\Scripts\python.exe -u scripts\progress_monitor.py --config config\config.yaml --host 0.0.0.0 --port 8765
 ```
 
-电脑访问 `http://127.0.0.1:8765/`；同一局域网手机使用 `http://电脑局域网IP:8765/`。
+电脑访问 `http://127.0.0.1:8765/`；同一局域网手机访问 `http://电脑局域网IP:8765/`。监控 JSON 和网页会使用断点里的实际微镜头总数，并显示当前粗镜头/微镜头、远程任务号、动态覆盖秒数、本地编码数和 ETA。
 
 ## 兼容模式
 
-如需复现“旧插图之间做首尾帧过渡”的方式，可改为：
+`native-chain` 是旧版“一条粗镜头对应一条短视频”模式。它能复现旧结果，但长语音区间会停留末帧，不再推荐作为最终长片：
+
+```yaml
+video:
+  h3:
+    mode: "native-chain"
+```
+
+`illustration-bridge` 使用两张旧插图作为 FL2VA 首尾帧，要求横、竖插图完整存在：
 
 ```yaml
 video:
   h3:
     mode: "illustration-bridge"
 ```
-
-该模式才会要求原横、竖插图完整存在。它适合旧插图已经过人工精选、角色和构图都可信的项目；本项目当前默认不使用它。
 
 完全关闭 H3 并恢复静态插图视频：
 
@@ -120,6 +148,6 @@ video:
 
 ## 质量与时间预期
 
-H3 是短视频模型，不能一次生成七小时连贯长片。`native-chain` 的目标是把长片拆成可恢复的局部连续镜头，同时用 BGM 场景边界限制漂移。长语音节拍中，动画结束后会停留在模型自身的稳定续帧；不会拉伸视频，也不会改变人声速度。
+当前每画幅规划 2,487 条，旧素材迁移后仍需要生成大量补充镜头。按服务器 5 秒约 7～10 分钟、10 秒约 15～20 分钟估算，横竖屏完整长跑可能持续数周。服务断电、网络中断和本地重启不会自动丢弃已经记录的远程任务。应结合日志、监控页和 checkpoint 中的 `coverage`、`success`、`quality_failures` 判断真实进度，不能只按等待时长判断卡死。
 
-按服务器现有实测，5 秒约 7–10 分钟、10 秒约 15–20 分钟。两种画幅共约 1404 条，完整长跑可能持续数周。这是预期行为，不是卡死；请结合日志、桌面版进度或 checkpoint 中的 `success` 数量判断进度。
+更完整的设计原则、验收标准和实测覆盖数据见 [`MiniMax-H3全时长动态长片方案.md`](MiniMax-H3全时长动态长片方案.md)。

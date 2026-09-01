@@ -479,6 +479,29 @@ def test_h3_variant_specs_reject_invalid_model_constraints(tmp_path):
         run_full.h3_variant_spec(config, run_full.video_variant_specs(config)[0])
 
 
+def test_continuous_h3_variant_uses_new_root_and_legacy_checkpoint(tmp_path):
+    config = make_config(tmp_path)
+    config["illustrations"] = {"size": "896x1152"}
+    config["video"] = {
+        "h3": {
+            "enabled": True,
+            "mode": "continuous-chain",
+            "output_dir": str(tmp_path / "continuous"),
+            "reuse_output_dir": str(tmp_path / "legacy"),
+            "shot_plan_path": str(tmp_path / "shot-plan.json"),
+            "max_chain_length": 3,
+        }
+    }
+
+    spec = run_full.h3_variant_spec(config, run_full.video_variant_specs(config)[0])
+
+    assert spec["mode"] == "continuous-chain"
+    assert spec["checkpoint"].parent == tmp_path / "continuous/portrait"
+    assert spec["legacy_checkpoint"] == tmp_path / "legacy/portrait/h3_clips.checkpoint.json"
+    assert spec["shot_plan"] == tmp_path / "shot-plan.json"
+    assert spec["max_chain_length"] == 3
+
+
 def test_native_h3_video_dry_run_does_not_require_legacy_illustrations(
     tmp_path, monkeypatch, capsys
 ):

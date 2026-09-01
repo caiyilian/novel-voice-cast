@@ -601,11 +601,19 @@ def h3_variant_spec(config: dict[str, Any], variant: dict[str, Any]) -> dict[str
         if variant["name"] == "landscape"
         else {"width": 672, "height": 864}
     )
+    default_composition = (
+        "cinematic 16:9 landscape staging; use environment and two-character spatial "
+        "relationships, keeping important action clear of the lower subtitle area"
+        if variant["name"] == "landscape"
+        else "vertical 7:9 staging; prioritize faces, gestures, and depth layers while "
+        "keeping important action clear of the lower subtitle area"
+    )
     root = resolve_path(h3_config.get("output_dir", "output/h3_video")) / variant["name"]
     mode = str(h3_config.get("mode", "native-chain")).strip().lower()
-    if mode not in {"native-chain", "illustration-bridge"}:
+    if mode not in {"native-chain", "continuous-chain", "illustration-bridge"}:
         raise PipelineError(
-            "video.h3.mode must be 'native-chain' or 'illustration-bridge'"
+            "video.h3.mode must be 'native-chain', 'continuous-chain', or "
+            "'illustration-bridge'"
         )
     width = int(variant_overrides.get("width", h3_config.get("width", defaults["width"])))
     height = int(
@@ -613,10 +621,13 @@ def h3_variant_spec(config: dict[str, Any], variant: dict[str, Any]) -> dict[str
     )
     minimum_duration = int(h3_config.get("minimum_duration", 5))
     maximum_duration = int(h3_config.get("maximum_duration", 10))
+    max_chain_length = int(h3_config.get("max_chain_length", 3))
     request_timeout = float(h3_config.get("request_timeout", 60.0))
     poll_seconds = float(h3_config.get("poll_seconds", 15.0))
     job_timeout = float(h3_config.get("job_timeout", 14400.0))
     max_attempts = int(h3_config.get("max_attempts", 3))
+    max_freeze_ratio = float(h3_config.get("max_freeze_ratio", 0.65))
+    max_black_ratio = float(h3_config.get("max_black_ratio", 0.20))
     generation_timeout = int(h3_config.get("generation_timeout", 15552000))
     render_timeout = int(h3_config.get("render_timeout", 604800))
     if width <= 0 or height <= 0 or width % 16 or height % 16:
@@ -625,8 +636,21 @@ def h3_variant_spec(config: dict[str, Any], variant: dict[str, Any]) -> dict[str
         raise PipelineError("H3 duration range must satisfy 5 <= minimum <= maximum <= 15")
     if min(request_timeout, poll_seconds, job_timeout) <= 0:
         raise PipelineError("H3 request, poll, and job timeouts must be positive")
-    if max_attempts < 1 or generation_timeout <= 0 or render_timeout <= 0:
+    if (
+        max_attempts < 1
+        or max_chain_length < 1
+        or generation_timeout <= 0
+        or render_timeout <= 0
+    ):
         raise PipelineError("H3 attempts and pipeline timeouts must be positive")
+    if not 0 <= max_freeze_ratio <= 1 or not 0 <= max_black_ratio <= 1:
+        raise PipelineError("H3 quality ratios must be between 0 and 1")
+    legacy_root_value = h3_config.get("reuse_output_dir")
+    legacy_root = (
+        resolve_path(legacy_root_value) / variant["name"]
+        if legacy_root_value
+        else None
+    )
     return {
         "mode": mode,
         "endpoint": str(
@@ -639,17 +663,30 @@ def h3_variant_spec(config: dict[str, Any], variant: dict[str, Any]) -> dict[str
         "height": height,
         "minimum_duration": minimum_duration,
         "maximum_duration": maximum_duration,
+        "max_chain_length": max_chain_length,
         "request_timeout": request_timeout,
         "poll_seconds": poll_seconds,
         "job_timeout": job_timeout,
         "max_attempts": max_attempts,
+        "max_freeze_ratio": max_freeze_ratio,
+        "max_black_ratio": max_black_ratio,
+        "composition_direction": str(
+            variant_overrides.get("composition_direction", default_composition)
+        ),
         "generation_timeout": generation_timeout,
         "render_timeout": render_timeout,
         "clips_dir": root / "clips",
         "frames_dir": root / "continuation_frames",
+        "keyframes_dir": root / "keyframes",
         "checkpoint": root / "h3_clips.checkpoint.json",
         "segments_dir": root / "render_segments",
         "render_checkpoint": root / "h3_render.checkpoint.json",
+        "shot_plan": resolve_path(
+            h3_config.get("shot_plan_path", "backend/data/h3_shot_plan.json")
+        ),
+        "legacy_checkpoint": (
+            legacy_root / "h3_clips.checkpoint.json" if legacy_root is not None else None
+        ),
     }
 
 
@@ -666,6 +703,57 @@ def _completed_checkpoint_records(path: Path, key: str) -> tuple[int, int]:
     return completed, len(records)
 
 
+def h3_clip_checkpoint_complete(
+    path: Path,
+    *,
+    mode: str,
+    plan_count: int,
+) -> tuple[bool, int, int, str]:
+    payload = read_json(path, {})
+    records = payload.get("clips") if isinstance(payload, dict) else None
+    if not isinstance(records, list):
+        return False, 0, 0, "H3 clip checkpoint is missing"
+    completed = sum(
+        1
+        for record in records
+        if isinstance(record, dict) and record.get("status") in {"success", "skipped"}
+    )
+    if mode == "continuous-chain":
+        beats = {
+            int(record.get("beat_index", -1))
+            for record in records
+            if isinstance(record, dict)
+        }
+        coverage = payload.get("coverage")
+        valid = (
+            payload.get("mode") == mode
+            and bool(records)
+            and completed == len(records)
+            and all(
+                isinstance(record, dict) and record.get("status") == "success"
+                for record in records
+            )
+            and beats == set(range(plan_count))
+            and isinstance(coverage, dict)
+            and coverage.get("complete") is True
+            and int(coverage.get("beat_count", -1)) == plan_count
+            and abs(
+                float(coverage.get("planned_seconds", 0))
+                - float(coverage.get("required_seconds", -1))
+            )
+            <= 1e-3
+        )
+        return (
+            valid,
+            completed,
+            len(records),
+            "" if valid else "continuous H3 dynamic coverage is incomplete",
+        )
+    expected = plan_count if mode == "native-chain" else max(0, plan_count - 1)
+    valid = len(records) == expected and completed == len(records)
+    return valid, completed, len(records), "" if valid else "H3 clip checkpoint is incomplete"
+
+
 def h3_video_progress_probe(
     config: dict[str, Any],
     plan_count: int,
@@ -673,22 +761,26 @@ def h3_video_progress_probe(
     variants = video_variant_specs(config)
     h3_config = config.get("video", {}).get("h3", {})
     mode = str(h3_config.get("mode", "native-chain")) if isinstance(h3_config, dict) else ""
-    clip_count = plan_count if mode == "native-chain" else max(0, plan_count - 1)
-    total_per_variant = clip_count + plan_count + 1
-    total = max(1, total_per_variant * len(variants))
+    native_modes = {"native-chain", "continuous-chain"}
+    fallback_clip_count = plan_count if mode in native_modes else max(0, plan_count - 1)
 
     def probe() -> tuple[int, int, str]:
         completed = 0
+        total = 0
         for variant in variants:
             spec = h3_variant_spec(config, variant)
-            clip_done, _ = _completed_checkpoint_records(spec["checkpoint"], "clips")
-            render_done, _ = _completed_checkpoint_records(
+            clip_done, clip_total = _completed_checkpoint_records(spec["checkpoint"], "clips")
+            render_done, render_total = _completed_checkpoint_records(
                 spec["render_checkpoint"], "segments"
             )
-            completed += min(clip_count, clip_done)
+            clip_total = clip_total or fallback_clip_count
+            render_total = render_total or plan_count
+            completed += min(clip_total, clip_done)
             completed += min(plan_count, render_done)
             if nonempty_file(variant["output"]):
                 completed += 1
+            total += clip_total + render_total + 1
+        total = max(1, total)
         return completed, total, f"H3 过渡与成片：{completed}/{total}"
 
     return probe
@@ -3586,7 +3678,10 @@ def step_video(config: dict[str, Any]) -> str:
         subtitle = variant["subtitle"]
         options = variant["options"]
         h3_spec = h3_variant_spec(config, variant) if use_h3 else None
-        native_h3 = h3_spec is not None and h3_spec["mode"] == "native-chain"
+        native_h3 = (
+            h3_spec is not None
+            and h3_spec["mode"] in {"native-chain", "continuous-chain"}
+        )
         image_files = [] if native_h3 else sorted(directory.glob("*.png"))
         dependencies = [plan_path, audio, *image_files]
         if native_h3:
@@ -3625,7 +3720,7 @@ def step_video(config: dict[str, Any]) -> str:
                     ROOT
                     / (
                         "scripts/generate_h3_native_clips.py"
-                        if h3_spec["mode"] == "native-chain"
+                        if h3_spec["mode"] in {"native-chain", "continuous-chain"}
                         else "scripts/generate_h3_clips.py"
                     )
                 ),
@@ -3645,17 +3740,36 @@ def step_video(config: dict[str, Any]) -> str:
                 "--poll-seconds", str(h3_spec["poll_seconds"]),
                 "--job-timeout", str(h3_spec["job_timeout"]),
                 "--max-attempts", str(h3_spec["max_attempts"]),
+                "--max-freeze-ratio", str(h3_spec["max_freeze_ratio"]),
+                "--max-black-ratio", str(h3_spec["max_black_ratio"]),
+                "--composition-direction", str(h3_spec["composition_direction"]),
                 "--ffprobe", ffprobe_bin,
                 "--resume",
             ]
-            if h3_spec["mode"] == "native-chain":
+            if h3_spec["mode"] in {"native-chain", "continuous-chain"}:
                 h3_command.extend(
                     [
+                        "--mode", str(h3_spec["mode"]),
                         "--scene-segments", str(bgm_segments_path(config)),
                         "--frames-dir", str(h3_spec["frames_dir"]),
+                        "--max-chain-length", str(h3_spec["max_chain_length"]),
                         "--ffmpeg", ffmpeg_bin,
                     ]
                 )
+                if h3_spec["mode"] == "continuous-chain":
+                    h3_command.extend(
+                        [
+                            "--keyframes-dir", str(h3_spec["keyframes_dir"]),
+                            "--shot-plan-output", str(h3_spec["shot_plan"]),
+                        ]
+                    )
+                    if h3_spec["legacy_checkpoint"] is not None:
+                        h3_command.extend(
+                            [
+                                "--legacy-checkpoint",
+                                str(h3_spec["legacy_checkpoint"]),
+                            ]
+                        )
             else:
                 h3_command.extend(["--images-dir", str(directory)])
             if config.get("illustrations", {}).get("prompt_audit_enabled", True):
@@ -3685,20 +3799,16 @@ def step_video(config: dict[str, Any]) -> str:
         h3_cache_complete = True
         if h3_spec is not None:
             plan_count = len(load_illustration_plan(plan_path))
-            expected_clip_count = (
-                plan_count
-                if h3_spec["mode"] == "native-chain"
-                else max(0, plan_count - 1)
-            )
-            clip_done, clip_total = _completed_checkpoint_records(
-                h3_spec["checkpoint"], "clips"
+            clip_complete, clip_done, clip_total, _ = h3_clip_checkpoint_complete(
+                h3_spec["checkpoint"],
+                mode=h3_spec["mode"],
+                plan_count=plan_count,
             )
             render_done, render_total = _completed_checkpoint_records(
                 h3_spec["render_checkpoint"], "segments"
             )
             h3_cache_complete = (
-                clip_total == expected_clip_count
-                and clip_done == clip_total
+                clip_complete
                 and render_total == plan_count
                 and render_done == render_total
             )
@@ -3919,7 +4029,10 @@ def stage_cache_status(stage: str, config: dict[str, Any]) -> tuple[bool, str]:
             illustration = variant["illustrations"]
             path = variant["output"]
             h3_spec = h3_variant_spec(config, variant) if h3_video_enabled(config) else None
-            native_h3 = h3_spec is not None and h3_spec["mode"] == "native-chain"
+            native_h3 = (
+                h3_spec is not None
+                and h3_spec["mode"] in {"native-chain", "continuous-chain"}
+            )
             dependencies = [plan_path, audio]
             if native_h3:
                 audit_path = visual_prompt_checkpoint_path(config)
@@ -3950,19 +4063,16 @@ def stage_cache_status(stage: str, config: dict[str, Any]) -> tuple[bool, str]:
                 dependencies.extend(sorted(illustration["directory"].glob("*.png")))
             h3_problems: list[str] = []
             if h3_spec is not None:
-                expected_clip_count = (
-                    plan_count
-                    if h3_spec["mode"] == "native-chain"
-                    else max(0, plan_count - 1)
-                )
-                clip_done, clip_total = _completed_checkpoint_records(
-                    h3_spec["checkpoint"], "clips"
+                clip_complete, _, _, clip_reason = h3_clip_checkpoint_complete(
+                    h3_spec["checkpoint"],
+                    mode=h3_spec["mode"],
+                    plan_count=plan_count,
                 )
                 render_done, render_total = _completed_checkpoint_records(
                     h3_spec["render_checkpoint"], "segments"
                 )
-                if clip_total != expected_clip_count or clip_done != clip_total:
-                    h3_problems.append("H3 clip checkpoint is incomplete")
+                if not clip_complete:
+                    h3_problems.append(clip_reason)
                 if render_total != plan_count or render_done != render_total:
                     h3_problems.append("H3 render checkpoint is incomplete")
                 dependencies.extend(
@@ -4007,7 +4117,7 @@ def dry_run_report(config: dict[str, Any], selected: tuple[str, ...]) -> bool:
                 h3_variant_spec(config, variant)["mode"]
                 for variant in video_variant_specs(config)
             }
-            if h3_modes == {"native-chain"}:
+            if h3_modes and h3_modes <= {"native-chain", "continuous-chain"}:
                 problems = validate_visual_prompt_audit(
                     illustration_plan_path(config),
                     visual_prompt_checkpoint_path(config),
