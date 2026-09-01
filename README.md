@@ -15,12 +15,12 @@
 ## 流程
 
 ```
-config.yaml → scripts/run_full.py → 解析 → 性别识别 → 情感标注 → 表演导演 → TTS合成 → 拼接/BGM/插图/视频
+config.yaml → scripts/run_full.py → 解析 → 性别识别 → 情感标注 → 表演导演 → TTS合成 → 拼接/BGM/视觉规划 → MiniMax H3 动态视频
 ```
 
 ## 快速开始
 
-从 `novel.txt + labels.txt` 配置模型并生成横竖版带 BGM、字幕、插图视频的完整说明，见 [`docs/全流程使用教程.md`](docs/全流程使用教程.md)。
+从 `novel.txt + labels.txt` 配置模型并生成横竖版带 BGM、字幕、H3 动态镜头视频的完整说明，见 [`docs/全流程使用教程.md`](docs/全流程使用教程.md)。
 
 不想使用命令行时，可使用 Electron + SolidJS 桌面版选择/拖入两份文件，一键运行、停止、断点继续，并查看 13 阶段实时进度、日志、耗时和产物。开发启动、Windows NSIS 安装包和完整操作说明见 [`desktop/README.md`](desktop/README.md)。
 
@@ -52,30 +52,17 @@ set "PYTHONUTF8=1" && .venv\Scripts\python.exe -u scripts\run_full.py --from-sta
 
 VoxCPM 会复用同一参考音频的 prompt cache，生成文件先写临时 WAV，经坏样本、格式和内容哈希检查后才原子替换正式文件。当前关闭 `normalize`，用于规避 Windows 中文路径下 `kaldifst` 无法读取 FST 的问题。
 
-## 生成带字幕的插图视频
+## 生成带字幕的 H3 动态视频
 
-完成 TTS 片段、最终混音、插图计划与插图生成后，直接运行：
+完成 TTS 片段、最终混音、插图计划和提示词审核后，默认通过远程 MiniMax H3 生成原生链式动态镜头：每个粗场景先用 T2VA 建立画面，再用上一条 H3 续帧驱动同场景 I2VA。旧插图不作为默认首尾帧，H3 音轨也不会替换现有 VoxCPM+BGM。
 
-```bash
-python scripts/generate_video.py
+```cmd
+.venv\Scripts\python.exe -u scripts\run_full.py --config config\config.yaml --from-stage video --to-stage video --log logs\h3_video.log
 ```
 
-脚本会按实际 WAV 时长及拼接间隔生成 SRT，并默认将中文字幕烧录进视频。每行最多 16 字、每条最多 2 行，长句优先在中文标点处拆分，显示格式为 `[说话人] 原文`。需要安装带 `libass` 字幕滤镜的 FFmpeg。
+任务可随时 `Ctrl+C`，同一命令会从远程 `job_id`、已下载视频、续帧及本地编码分段继续。架构、服务接口、配置和耗时说明见 [`docs/MiniMax-H3视频集成.md`](docs/MiniMax-H3视频集成.md)。静态插图版仍可通过 `video.h3.enabled: false` 保留使用。
 
-所有输入均可通过命令行覆盖，例如：
-
-```bash
-python scripts/generate_video.py \
-  --novel novels/novel.txt \
-  --labels novels/labels.txt \
-  --segments-dir output/segments \
-  --plan output/illustration_plan.json \
-  --illustrations-dir output/illustrations \
-  --audio output/full_volume_bgm.mp3 \
-  --output output/illustration_video.mp4
-```
-
-如需保留无字幕版本，可增加 `--no-subtitles`。标签格式无法安全自动判断时，可显式指定 `--subtitle-label-mode line|parsed-line|dialogue`。
+现有“一条规划项对应一条短视频”的版本会在长区间保持尾帧。全时长持续动画长片的分镜、关键帧、质量门禁、断点迁移与无静止合成设计见 [`docs/MiniMax-H3全时长动态长片方案.md`](docs/MiniMax-H3全时长动态长片方案.md)。
 
 ## 技术栈
 
@@ -84,6 +71,7 @@ python scripts/generate_video.py \
 | 配置 | YAML |
 | TTS | VoxCPM（参考音频 + 自然语言表演控制）+ edge-tts（预设） |
 | AI 分析 | SenseNova 6.7 Flash Lite（256K 上下文，多 Agent 严格证据审查） |
+| 动态视频 | MiniMax H3（T2VA 场景建立 + I2VA 续帧链） |
 | 音频处理 | pydub + soundfile |
 | 去噪 | DeepFilterNet3 |
 

@@ -148,7 +148,7 @@ class ProcessProbe:
                 "$ErrorActionPreference='SilentlyContinue';"
                 "Get-CimInstance Win32_Process | "
                 "Where-Object {$_.Name -match 'python' -and "
-                "($_.CommandLine -match 'run_full.py|generate_illustrations.py')} | "
+                "($_.CommandLine -match 'run_full.py|generate_illustrations.py|generate_h3_')} | "
                 "Select-Object ProcessId,CreationDate,CommandLine | ConvertTo-Json -Compress"
             )
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -187,7 +187,10 @@ class ProcessProbe:
             return []
         values = []
         for line in result.stdout.splitlines():
-            if "run_full.py" not in line and "generate_illustrations.py" not in line:
+            if not any(
+                name in line
+                for name in ("run_full.py", "generate_illustrations.py", "generate_h3_")
+            ):
                 continue
             parts = line.strip().split(maxsplit=1)
             values.append({"pid": int(parts[0]), "started_at": None, "command": parts[-1]})
@@ -250,6 +253,12 @@ class ProgressCollector:
             illustrations = {}
         if not isinstance(video_config, dict):
             video_config = {}
+        h3_config = video_config.get("h3", {})
+        if not isinstance(h3_config, dict):
+            h3_config = {}
+        h3_enabled = bool(h3_config.get("enabled", False))
+        h3_mode = str(h3_config.get("mode", "native-chain"))
+        h3_root = _resolve(self.root, h3_config.get("output_dir"), "output/h3_video")
 
         manifest_path = self.root / "output/run_full_manifest.json"
         audit_path = _resolve(
@@ -361,13 +370,44 @@ class ProgressCollector:
             )
         video = videos[0]
 
-        phase = self._phase(pipeline_running, audit, image_variants, videos, manifest)
+        h3_variants = []
+        if h3_enabled:
+            for item in video_configs:
+                variant_root = h3_root / item["name"]
+                h3_variants.append(
+                    self._h3_status(
+                        variant_root / "h3_clips.checkpoint.json",
+                        variant_root / "h3_render.checkpoint.json",
+                        fallback_total=audit["total"],
+                        output_exists=next(
+                            video_item["exists"]
+                            for video_item in videos
+                            if video_item["name"] == item["name"]
+                        ),
+                        name=item["name"],
+                        mode=h3_mode,
+                    )
+                )
+
+        phase = self._phase(
+            pipeline_running,
+            audit,
+            image_variants,
+            videos,
+            h3_variants,
+            manifest,
+        )
         stages = self._stages(manifest, phase, pipeline_running)
         activity_paths = (
             manifest_path,
             audit_path,
             llm_log_path,
             *[item["checkpoint"] for item in image_configs],
+            *[
+                Path(path)
+                for item in h3_variants
+                for path in (item["checkpoint_path"], item["render_checkpoint_path"])
+            ],
             *[item["path"] for item in video_configs],
         )
         ages = [value for value in (_age_seconds(path) for path in activity_paths) if value is not None]
@@ -390,6 +430,9 @@ class ProgressCollector:
             "image_variants": image_variants,
             "video": video,
             "videos": videos,
+            "h3_enabled": h3_enabled,
+            "h3_mode": h3_mode if h3_enabled else None,
+            "h3_variants": h3_variants,
             "llm": llm,
             "image": {
                 **_size_info(illustrations.get("size", "896x1152")),
@@ -486,6 +529,87 @@ class ProgressCollector:
             **self.rates.sample(rate_key, success, total),
         }
 
+    def _h3_status(
+        self,
+        checkpoint_path: Path,
+        render_checkpoint_path: Path,
+        *,
+        fallback_total: int,
+        output_exists: bool,
+        name: str,
+        mode: str,
+    ) -> dict[str, Any]:
+        raw = _read_json(checkpoint_path, {})
+        clips = raw.get("clips", []) if isinstance(raw, dict) else []
+        if not isinstance(clips, list):
+            clips = []
+        render_raw = _read_json(render_checkpoint_path, {})
+        segments = render_raw.get("segments", []) if isinstance(render_raw, dict) else []
+        if not isinstance(segments, list):
+            segments = []
+        expected_clips = fallback_total if mode == "native-chain" else max(0, fallback_total - 1)
+        clip_total = len(clips) or expected_clips
+        render_total = len(segments) or fallback_total
+        clip_counts = Counter(
+            str(item.get("status", "pending"))
+            for item in clips
+            if isinstance(item, dict)
+        )
+        render_counts = Counter(
+            str(item.get("status", "pending"))
+            for item in segments
+            if isinstance(item, dict)
+        )
+        active_statuses = {"queued", "running", "postprocessing", "postprocess_failed"}
+        current = next(
+            (
+                item
+                for item in clips
+                if isinstance(item, dict) and str(item.get("status")) in active_statuses
+            ),
+            None,
+        )
+        clip_success = clip_counts["success"] + clip_counts["skipped"]
+        render_success = render_counts["success"] + render_counts["skipped"]
+        completed = clip_success + render_success + int(output_exists)
+        total = clip_total + render_total + 1
+        return {
+            "name": name,
+            "mode": mode,
+            "checkpoint_exists": checkpoint_path.is_file(),
+            "checkpoint_path": str(checkpoint_path),
+            "render_checkpoint_path": str(render_checkpoint_path),
+            "clip_total": clip_total,
+            "clip_success": clip_success,
+            "clip_running": sum(clip_counts[status] for status in active_statuses),
+            "clip_failed": clip_counts["failed"],
+            "render_total": render_total,
+            "render_success": render_success,
+            "output_exists": output_exists,
+            "completed": completed,
+            "total": total,
+            "percent": round(completed * 100 / total, 2) if total else 0.0,
+            "current": (
+                {
+                    key: current.get(key)
+                    for key in (
+                        "index",
+                        "title",
+                        "status",
+                        "attempts",
+                        "job_id",
+                        "scene_title",
+                        "requested_duration",
+                    )
+                }
+                if current
+                else None
+            ),
+            "updated_at": _modified_at(checkpoint_path),
+            "activity_age_seconds": _age_seconds(checkpoint_path),
+            **self.rates.sample(f"h3-{name}", clip_success, clip_total),
+        }
+
     @staticmethod
     def _public_image_record(record: Mapping[str, Any] | None) -> dict[str, Any] | None:
         if not record:
@@ -537,11 +661,29 @@ class ProgressCollector:
         audit: Mapping[str, Any],
         images: Sequence[Mapping[str, Any]],
         videos: Sequence[Mapping[str, Any]],
+        h3_variants: Sequence[Mapping[str, Any]],
         manifest: Mapping[str, Any],
     ) -> dict[str, str]:
         if running:
             if audit.get("total") and audit.get("completed", 0) < audit.get("total", 0):
                 return {"code": "prompt-audit", "label": "插图提示词审核"}
+            video_stage = manifest.get("stages", {}).get("video", {}) if isinstance(manifest, Mapping) else {}
+            video_stage_running = (
+                isinstance(video_stage, Mapping) and video_stage.get("status") == "running"
+            )
+            if h3_variants and (
+                video_stage_running or any(item.get("checkpoint_exists") for item in h3_variants)
+            ):
+                if any(
+                    item.get("clip_success", 0) < item.get("clip_total", 0)
+                    for item in h3_variants
+                ):
+                    return {"code": "h3-generation", "label": "MiniMax H3 动态镜头生成"}
+                if any(
+                    item.get("render_success", 0) < item.get("render_total", 0)
+                    for item in h3_variants
+                ):
+                    return {"code": "h3-render", "label": "H3 镜头时间轴合成"}
             if any(
                 image.get("total") and image.get("success", 0) < image.get("total", 0)
                 for image in images
@@ -578,7 +720,11 @@ class ProgressCollector:
                 "image-generation",
             }:
                 status = "running"
-            if pipeline_running and stage == "video" and phase.get("code") == "video":
+            if pipeline_running and stage == "video" and phase.get("code") in {
+                "video",
+                "h3-generation",
+                "h3-render",
+            }:
                 status = "running"
             values.append(
                 {
@@ -621,6 +767,7 @@ HTML = r"""<!doctype html>
   <section class="grid">
     <article class="card"><h2>提示词审核</h2><div class="value" id="auditValue">—</div><div class="bar"><div class="fill" id="auditBar"></div></div><div class="pair muted"><span id="auditNext">—</span><span id="auditEta">—</span></div></article>
     <article class="card"><h2>本地文生图</h2><div class="value" id="imageValue">—</div><div class="bar"><div class="fill" id="imageBar"></div></div><div class="pair muted"><span id="imageState">—</span><span id="imageEta">—</span></div></article>
+    <article class="card"><h2>MiniMax H3 镜头</h2><div class="value" id="h3Value">—</div><div class="bar"><div class="fill" id="h3Bar"></div></div><div class="pair muted"><span id="h3State">—</span><span id="h3Eta">—</span></div></article>
     <article class="card"><h2>视频输出</h2><div class="value" id="videoValue">—</div><div class="sub" id="videoPath">—</div></article>
     <article class="card"><h2>画面规格</h2><div class="value" id="ratioValue">—</div><div class="sub" id="sizeValue">—</div></article>
     <article class="card wide"><h2>SenseNova 最近状态</h2><div id="llmSummary" class="sub">—</div><div id="accounts" style="margin-top:10px"></div></article>
@@ -638,6 +785,8 @@ async function refresh(){try{const r=await fetch('/api/status',{cache:'no-store'
   progress('audit',d.audit);$('auditNext').textContent=d.audit.next_index?`下一项 #${d.audit.next_index}`:'审核完成';$('auditEta').textContent=d.audit.eta_seconds==null?'页面观测到新进度后显示 ETA':`预计剩余 ${duration(d.audit.eta_seconds)}`;
   const iv=d.image_variants||[d.image_generation], done=iv.reduce((n,x)=>n+x.success,0), total=iv.reduce((n,x)=>n+x.total,0), pct=total?done*100/total:0;
   $('imageValue').textContent=iv.map(x=>`${x.name==='portrait'?'竖':'横'} ${x.success}/${x.total}`).join(' · ');$('imageBar').style.width=Math.min(100,pct)+'%';$('imageState').textContent=iv.some(x=>x.checkpoint_exists)?iv.map(x=>`${x.name==='portrait'?'竖':'横'}失败 ${x.failed}`).join(' / '):'等待首条审核结果';const imageEta=iv.map(x=>x.eta_seconds).filter(x=>x!=null);$('imageEta').textContent=imageEta.length?`较慢队列剩余 ${duration(Math.max(...imageEta))}`:'—';
+  const hv=d.h3_variants||[], hdone=hv.reduce((n,x)=>n+x.completed,0), htotal=hv.reduce((n,x)=>n+x.total,0), hpct=htotal?hdone*100/htotal:0;
+  $('h3Value').textContent=hv.length?hv.map(x=>`${x.name==='portrait'?'竖':'横'} 片段 ${x.clip_success}/${x.clip_total}`).join(' · '):'未启用';$('h3Bar').style.width=Math.min(100,hpct)+'%';$('h3State').textContent=hv.length?hv.map(x=>{const c=x.current;return `${x.name==='portrait'?'竖':'横'} ${c?`#${Number(c.index)+1} ${c.status}`:`编码 ${x.render_success}/${x.render_total}`}`}).join(' / '):'静态插图模式';const h3Eta=hv.map(x=>x.eta_seconds).filter(x=>x!=null);$('h3Eta').textContent=h3Eta.length?`较慢队列剩余 ${duration(Math.max(...h3Eta))}`:'等待生成两条后估算';
   const vv=d.videos||[d.video];$('videoValue').textContent=vv.map(x=>`${x.name==='portrait'?'竖':'横'}${x.exists?'已生成':'待生成'}`).join(' · ');$('videoPath').innerHTML=vv.map(x=>`<code>${esc(x.path)}</code>`).join('<br>');
   $('ratioValue').textContent=(d.image_sizes||[d.image]).map(x=>x.aspect_ratio).join(' + ');$('sizeValue').textContent=`${(d.image_sizes||[d.image]).map(x=>x.raw).join(' / ')} · steps ${d.image.steps} · CFG ${d.image.cfg}`;
   const latest=d.llm.latest;$('llmSummary').textContent=latest?`${latest.model} · account=${latest.account} · ${latest.status} · ${Number(latest.elapsed_seconds||0).toFixed(1)} 秒`:'尚无记录';

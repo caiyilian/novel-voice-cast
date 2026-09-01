@@ -102,3 +102,56 @@ video:
     assert [item["name"] for item in status["image_variants"]] == ["portrait", "landscape"]
     assert len(status["videos"]) == 2
     assert next(item for item in status["stages"] if item["name"] == "illustrations")["status"] == "running"
+
+
+def test_collector_reports_native_h3_clip_and_render_progress(tmp_path):
+    config = tmp_path / "config/config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        """
+illustrations:
+  prompt_audit_checkpoint_path: backend/data/audit.json
+video:
+  output_path: output/final.mp4
+  h3:
+    enabled: true
+    mode: native-chain
+    output_dir: output/h3_video
+""".strip(),
+        encoding="utf-8",
+    )
+    _write_json(
+        tmp_path / "backend/data/audit.json",
+        {"total_items": 2, "completed_indices": [0, 1], "results": [{}, {}], "errors": {}},
+    )
+    _write_json(
+        tmp_path / "output/run_full_manifest.json",
+        {"run_status": "running", "stages": {"video": {"status": "running"}}},
+    )
+    _write_json(
+        tmp_path / "output/h3_video/portrait/h3_clips.checkpoint.json",
+        {
+            "mode": "native-chain",
+            "clips": [
+                {"index": 0, "status": "success", "attempts": 1},
+                {"index": 1, "status": "running", "attempts": 1, "job_id": "job-2"},
+            ],
+        },
+    )
+    _write_json(
+        tmp_path / "output/h3_video/portrait/h3_render.checkpoint.json",
+        {"segments": [{"index": 0, "status": "success"}, {"index": 1, "status": "pending"}]},
+    )
+
+    status = ProgressCollector(
+        tmp_path,
+        Path("config/config.yaml"),
+        process_probe=lambda: [{"pid": 123, "command": "generate_h3_native_clips.py"}],
+    ).collect()
+
+    h3 = status["h3_variants"][0]
+    assert status["phase"]["code"] == "h3-generation"
+    assert h3["clip_success"] == 1
+    assert h3["clip_running"] == 1
+    assert h3["render_success"] == 1
+    assert h3["current"]["job_id"] == "job-2"
