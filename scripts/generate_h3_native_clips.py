@@ -10,6 +10,7 @@ illustrations.
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left, bisect_right
 import json
 import logging
 import math
@@ -22,6 +23,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import requests
+from PIL import Image, ImageChops, ImageStat
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -50,10 +52,21 @@ from scripts.generate_h3_clips import (  # noqa: E402
     validate_downloaded_clip,
     wait_for_job,
 )
+from app.core.illustration_planner import (  # noqa: E402
+    _format_character_cards,
+    _format_visual_memory_for_chunk,
+    _load_character_cards,
+    _load_visual_memory,
+)
+from app.core.subtitles import (  # noqa: E402
+    build_segment_timestamps,
+    discover_segment_files,
+    load_subtitle_entries,
+)
 
 
 LOGGER = logging.getLogger("h3_native")
-CONTINUOUS_CHECKPOINT_VERSION = 2
+CONTINUOUS_CHECKPOINT_VERSION = 3
 SHOT_PLAN_VERSION = 1
 FREEZE_DURATION_RE = re.compile(r"freeze_duration:\s*([0-9.]+)")
 BLACK_DURATION_RE = re.compile(r"black_duration:([0-9.]+)")
@@ -194,6 +207,8 @@ def build_native_prompt(
     phase: str | None = None,
     camera: str = "",
     composition_direction: str = "",
+    identity_context: str = "",
+    audio_context: str = "",
 ) -> str:
     visual = str(item.get("prompt", "")).strip()
     description = str(item.get("description", "")).strip()
@@ -241,6 +256,22 @@ def build_native_prompt(
     composition = str(composition_direction).strip()
     if composition:
         composition = f"Aspect-ratio composition: {composition} "
+    identity = str(identity_context).strip()
+    if identity:
+        identity = (
+            "Continuity bible (binding; do not contradict these facts):\n"
+            + identity
+            + "\n"
+        )
+    audio_cues = str(audio_context).strip()
+    if audio_cues:
+        audio_cues = (
+            "Audio-locked timing cues for this exact micro-shot (use only concrete visible "
+            "actions or reactions consistent with the audited visual target; never draw or "
+            "speak these words, and never literalize metaphors):\n"
+            + audio_cues
+            + "\n"
+        )
     return (
         reference
         + "integrated_multimodal_description: [Shot 1] High-end 2D anime feature-film "
@@ -254,6 +285,7 @@ def build_native_prompt(
         "wardrobe changes, or unmotivated cuts. "
         f"Scene ({scene_title}): {scene_description} "
         f"Current beat ({title}): {description} Visual target: {visual} "
+        f"{identity}{audio_cues}"
         f"Let the action settle into a clean, holdable composition before {duration_seconds:.2f} seconds.\n\n"
         "overall_soundscape: Natural ambience only. No spoken dialogue and no voiceover; "
         "the final VoxCPM dialogue and production mix are supplied separately.\n\n"
@@ -382,6 +414,62 @@ def inspect_motion_quality(
             f"black_ratio={black_ratio:.3f} (max {max_black_ratio:.3f})",
             metrics,
         )
+    return metrics
+
+
+def image_similarity(first: Path, second: Path) -> float:
+    with Image.open(first) as first_image, Image.open(second) as second_image:
+        left = first_image.convert("RGB").resize((256, 256), Image.Resampling.LANCZOS)
+        right = second_image.convert("RGB").resize((256, 256), Image.Resampling.LANCZOS)
+        difference = ImageChops.difference(left, right)
+        channel_means = ImageStat.Stat(difference).mean
+    return max(0.0, min(1.0, 1.0 - sum(channel_means) / (len(channel_means) * 255)))
+
+
+def inspect_anchor_quality(
+    clip_path: Path,
+    *,
+    first_frame: Path | None,
+    last_frame: Path | None,
+    media_duration_seconds: float,
+    ffmpeg: str,
+    min_anchor_similarity: float,
+) -> dict[str, Any]:
+    metrics: dict[str, Any] = {
+        "min_anchor_similarity": min_anchor_similarity,
+        "first_frame_similarity": None,
+        "last_frame_similarity": None,
+    }
+    checks = (
+        ("first_frame_similarity", first_frame, 0.0),
+        ("last_frame_similarity", last_frame, media_duration_seconds),
+    )
+    for key, reference, timestamp in checks:
+        if reference is None:
+            continue
+        extracted = clip_path.with_name(
+            f".{clip_path.stem}.{os.getpid()}.{key}.png"
+        )
+        try:
+            extract_continuation_frame(
+                clip_path,
+                extracted,
+                timestamp_seconds=timestamp,
+                media_duration_seconds=media_duration_seconds,
+                ffmpeg=ffmpeg,
+            )
+            similarity = image_similarity(reference, extracted)
+            metrics[key] = round(similarity, 6)
+            if similarity < min_anchor_similarity:
+                failed = {**metrics, "status": "failed", "failed_anchor": key}
+                raise H3MotionQualityError(
+                    f"H3 anchor quality gate failed: {key}={similarity:.3f} "
+                    f"(min {min_anchor_similarity:.3f})",
+                    failed,
+                )
+        finally:
+            extracted.unlink(missing_ok=True)
+    metrics["status"] = "passed"
     return metrics
 
 
@@ -531,6 +619,7 @@ def prepare_checkpoint(
     max_chain_length: int = 3,
     max_freeze_ratio: float = 0.65,
     max_black_ratio: float = 0.20,
+    min_anchor_similarity: float = 0.90,
 ) -> dict[str, Any]:
     source_hash = sha256_text(
         {
@@ -544,6 +633,7 @@ def prepare_checkpoint(
             "max_chain_length": max_chain_length,
             "max_freeze_ratio": max_freeze_ratio,
             "max_black_ratio": max_black_ratio,
+            "min_anchor_similarity": min_anchor_similarity,
         }
     )
     beat_count = 1 + max((int(record["beat_index"]) for record in records), default=-1)
@@ -568,6 +658,7 @@ def prepare_checkpoint(
         "max_chain_length": max_chain_length,
         "max_freeze_ratio": max_freeze_ratio,
         "max_black_ratio": max_black_ratio,
+        "min_anchor_similarity": min_anchor_similarity,
         "scene_source_hash": scene_source_hash,
         "source_hash": source_hash,
         "coverage": {
@@ -605,6 +696,7 @@ def prepare_checkpoint(
         and old.get("max_chain_length", 3) == max_chain_length
         and float(old.get("max_freeze_ratio", 0.65)) == max_freeze_ratio
         and float(old.get("max_black_ratio", 0.20)) == max_black_ratio
+        and float(old.get("min_anchor_similarity", -1.0)) == min_anchor_similarity
         and isinstance(old.get("clips"), list)
     )
     exact_legacy_compatible = (
@@ -639,6 +731,10 @@ def prepare_checkpoint(
         "interval_duration",
         "continuity_reset",
         "chain_position",
+        "audio_start_ms",
+        "audio_end_ms",
+        "source_lines",
+        "audio_cues",
         "static_identity",
     }
     reused = 0
@@ -716,6 +812,10 @@ def write_shot_plan(
         "interval_duration",
         "continuity_reset",
         "chain_position",
+        "audio_start_ms",
+        "audio_end_ms",
+        "source_lines",
+        "audio_cues",
         "static_identity",
     )
     shots = [{key: record.get(key) for key in fields} for record in records]
@@ -736,6 +836,147 @@ def write_shot_plan(
         except (OSError, json.JSONDecodeError):
             pass
     atomic_write_json(path, payload)
+
+
+def build_identity_contexts(
+    plan: Sequence[Mapping[str, Any]],
+    *,
+    character_cards_path: Path | None,
+    visual_memory_path: Path | None,
+) -> dict[int, str]:
+    cards = _load_character_cards(character_cards_path) if character_cards_path else {}
+    memory = _load_visual_memory(visual_memory_path) if visual_memory_path else {}
+    contexts: dict[int, str] = {}
+    for beat_index, item in enumerate(plan):
+        raw_names = item.get("characters", [])
+        names = (
+            [str(name).strip() for name in raw_names if str(name).strip()]
+            if isinstance(raw_names, list)
+            else []
+        )
+        if not names:
+            continue
+        start_line = max(1, int(item.get("start_line", 1)))
+        end_line = max(start_line, int(item.get("end_line", start_line)))
+        blocks = [
+            _format_character_cards(names, cards).strip(),
+            _format_visual_memory_for_chunk(
+                names,
+                memory,
+                start_line,
+                end_line,
+            ).strip(),
+        ]
+        context = "\n".join(block for block in blocks if block)
+        if context:
+            contexts[beat_index] = context
+    return contexts
+
+
+def load_performance_controls(paths: Sequence[Path]) -> dict[int, str]:
+    controls: dict[int, str] = {}
+    for path in paths:
+        if not path.is_file():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            LOGGER.warning("Ignoring unreadable performance directions: %s", path)
+            continue
+        raw = payload.get("results") if isinstance(payload, dict) else payload
+        values = raw.values() if isinstance(raw, dict) else raw if isinstance(raw, list) else []
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            try:
+                dialogue_index = int(item.get("dialogue_index"))
+            except (TypeError, ValueError):
+                continue
+            control = str(item.get("performance_control", "")).strip()
+            if control:
+                controls[dialogue_index] = control
+    return controls
+
+
+def format_audio_context(cues: Sequence[Mapping[str, Any]]) -> str:
+    context_lines = []
+    for cue in cues:
+        cue_start = float(cue.get("visible_from_seconds", 0.0))
+        cue_end = float(cue.get("visible_until_seconds", cue_start))
+        line = (
+            f"[{cue_start:.2f}s-{cue_end:.2f}s] line {cue.get('source_line', 0)}, "
+            f"{cue.get('speaker', '')}: {cue.get('text', '')}"
+        )
+        if cue.get("performance_control"):
+            line += f" | acting: {cue['performance_control']}"
+        context_lines.append(line)
+    return "\n".join(context_lines)
+
+
+def attach_audio_locked_cues(
+    records: Sequence[dict[str, Any]],
+    timeline: Sequence[Mapping[str, Any]],
+    entries: Sequence[Any],
+    timestamps: Sequence[Mapping[str, Any]],
+    *,
+    performance_paths: Sequence[Path],
+) -> None:
+    """Attach the exact speech and acting cues overlapping every micro-shot."""
+
+    if len(entries) != len(timestamps):
+        raise ValueError("Subtitle entries and timestamps do not match")
+    starts = [int(item["start_ms"]) for item in timestamps]
+    ends = [int(item["end_ms"]) for item in timestamps]
+    controls = load_performance_controls(performance_paths)
+    for record in records:
+        beat_index = int(record["beat_index"])
+        beat_start = int(timeline[beat_index]["start_ms"])
+        absolute_start = beat_start + round(float(record["coverage_start_seconds"]) * 1000)
+        absolute_end = beat_start + round(float(record["coverage_end_seconds"]) * 1000)
+        left = bisect_right(ends, absolute_start)
+        right = bisect_left(starts, absolute_end)
+        cues = []
+        for dialogue_index in range(left, right):
+            entry = entries[dialogue_index]
+            cue_start_ms = int(timestamps[dialogue_index]["start_ms"])
+            cue_end_ms = int(timestamps[dialogue_index]["end_ms"])
+            text = str(getattr(entry, "text", "")).strip()
+            speaker = str(getattr(entry, "speaker", "")).strip()
+            source_line = int(getattr(entry, "source_line", 0) or 0)
+            cue = {
+                "dialogue_index": dialogue_index,
+                "source_line": source_line,
+                "speaker": speaker,
+                "text": text,
+                "audio_start_ms": cue_start_ms,
+                "audio_end_ms": cue_end_ms,
+                "visible_from_seconds": round(
+                    max(0, cue_start_ms - absolute_start) / 1000,
+                    3,
+                ),
+                "visible_until_seconds": round(
+                    max(0, min(absolute_end, cue_end_ms) - absolute_start) / 1000,
+                    3,
+                ),
+            }
+            control = controls.get(dialogue_index)
+            if control:
+                cue["performance_control"] = control
+            cues.append(cue)
+        record["audio_start_ms"] = absolute_start
+        record["audio_end_ms"] = absolute_end
+        record["source_lines"] = sorted(
+            {int(cue["source_line"]) for cue in cues if int(cue["source_line"]) > 0}
+        )
+        record["audio_cues"] = cues
+        record["static_identity"] = sha256_text(
+            {
+                "base_static_identity": record["static_identity"],
+                "audio_start_ms": absolute_start,
+                "audio_end_ms": absolute_end,
+                "audio_cues": cues,
+            }
+        )
 
 
 def reset_record(record: dict[str, Any], *, keep_attempts: bool = False) -> None:
@@ -965,7 +1206,9 @@ def run_generation(
     max_attempts: int,
     max_freeze_ratio: float,
     max_black_ratio: float,
+    min_anchor_similarity: float,
     composition_direction: str,
+    identity_contexts: Mapping[int, str],
     ffmpeg: str,
     ffprobe: str,
 ) -> dict[str, Any]:
@@ -1005,6 +1248,8 @@ def run_generation(
             phase=str(record.get("shot_phase", "")) or None,
             camera=str(record.get("camera_direction", "")),
             composition_direction=composition_direction,
+            identity_context=identity_contexts.get(beat_index, ""),
+            audio_context=format_audio_context(record.get("audio_cues", [])),
         )
         fingerprint = sha256_text(
             {
@@ -1146,6 +1391,15 @@ def run_generation(
                     max_freeze_ratio=max_freeze_ratio,
                     max_black_ratio=max_black_ratio,
                 )
+                anchor_quality = inspect_anchor_quality(
+                    output_path,
+                    first_frame=input_frame,
+                    last_frame=target_frame,
+                    media_duration_seconds=float(metadata["duration"]),
+                    ffmpeg=ffmpeg,
+                    min_anchor_similarity=min_anchor_similarity,
+                )
+                quality = {**quality, **anchor_quality, "status": "passed"}
                 record.update(
                     status="postprocessing",
                     output_file=str(output_path),
@@ -1248,6 +1502,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--prompt-audit-checkpoint", type=Path)
+    parser.add_argument("--character-cards", type=Path)
+    parser.add_argument("--visual-memory", type=Path)
+    parser.add_argument(
+        "--performance-directions",
+        type=Path,
+        action="append",
+        default=[],
+    )
     parser.add_argument("--scene-segments", type=Path, required=True)
     parser.add_argument("--novel", type=Path, required=True)
     parser.add_argument("--labels", type=Path, required=True)
@@ -1271,6 +1533,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument("--max-freeze-ratio", type=float, default=0.65)
     parser.add_argument("--max-black-ratio", type=float, default=0.20)
+    parser.add_argument("--min-anchor-similarity", type=float, default=0.90)
     parser.add_argument("--composition-direction", default="")
     parser.add_argument("--ffmpeg", default=os.environ.get("FFMPEG_BIN", "ffmpeg"))
     parser.add_argument("--ffprobe", default=os.environ.get("FFPROBE_BIN", "ffprobe"))
@@ -1292,7 +1555,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("H3 duration range must satisfy 5 <= minimum <= maximum <= 15")
     if args.max_chain_length < 1:
         raise SystemExit("--max-chain-length must be positive")
-    if not 0 <= args.max_freeze_ratio <= 1 or not 0 <= args.max_black_ratio <= 1:
+    if (
+        not 0 <= args.max_freeze_ratio <= 1
+        or not 0 <= args.max_black_ratio <= 1
+        or not 0 <= args.min_anchor_similarity <= 1
+    ):
         raise SystemExit("H3 quality ratios must be between 0 and 1")
     plan = load_plan(args.plan)
     audited_plan = load_audited_plan(plan, args.prompt_audit_checkpoint)
@@ -1305,6 +1572,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         ffprobe=args.ffprobe,
     )
     scenes = load_scene_segments(args.scene_segments)
+    identity_contexts = build_identity_contexts(
+        audited_plan,
+        character_cards_path=args.character_cards,
+        visual_memory_path=args.visual_memory,
+    )
+    LOGGER.info(
+        "Loaded continuity-bible context for %d/%d story beats",
+        len(identity_contexts),
+        len(audited_plan),
+    )
     records = build_records(
         audited_plan,
         timeline,
@@ -1316,6 +1593,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         limit=args.limit,
         mode=args.mode,
         max_chain_length=args.max_chain_length,
+    )
+    segment_count = len(discover_segment_files(args.segments_dir))
+    entries = load_subtitle_entries(
+        args.novel,
+        args.labels,
+        expected_segment_count=segment_count,
+    )
+    timestamps = build_segment_timestamps(entries, args.segments_dir)
+    attach_audio_locked_cues(
+        records,
+        timeline,
+        entries,
+        timestamps,
+        performance_paths=args.performance_directions,
     )
     scene_source_hash = sha256_file(args.scene_segments)
     if args.mode == "continuous-chain" and args.shot_plan_output is not None:
@@ -1338,6 +1629,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_chain_length=args.max_chain_length,
         max_freeze_ratio=args.max_freeze_ratio,
         max_black_ratio=args.max_black_ratio,
+        min_anchor_similarity=args.min_anchor_similarity,
     )
     save_checkpoint(args.checkpoint, checkpoint)
     resets = sum(
@@ -1382,7 +1674,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_attempts=args.max_attempts,
         max_freeze_ratio=args.max_freeze_ratio,
         max_black_ratio=args.max_black_ratio,
+        min_anchor_similarity=args.min_anchor_similarity,
         composition_direction=args.composition_direction,
+        identity_contexts=identity_contexts,
         ffmpeg=args.ffmpeg,
         ffprobe=args.ffprobe,
     )

@@ -628,6 +628,7 @@ def h3_variant_spec(config: dict[str, Any], variant: dict[str, Any]) -> dict[str
     max_attempts = int(h3_config.get("max_attempts", 3))
     max_freeze_ratio = float(h3_config.get("max_freeze_ratio", 0.65))
     max_black_ratio = float(h3_config.get("max_black_ratio", 0.20))
+    min_anchor_similarity = float(h3_config.get("min_anchor_similarity", 0.90))
     generation_timeout = int(h3_config.get("generation_timeout", 15552000))
     render_timeout = int(h3_config.get("render_timeout", 604800))
     if width <= 0 or height <= 0 or width % 16 or height % 16:
@@ -643,7 +644,11 @@ def h3_variant_spec(config: dict[str, Any], variant: dict[str, Any]) -> dict[str
         or render_timeout <= 0
     ):
         raise PipelineError("H3 attempts and pipeline timeouts must be positive")
-    if not 0 <= max_freeze_ratio <= 1 or not 0 <= max_black_ratio <= 1:
+    if (
+        not 0 <= max_freeze_ratio <= 1
+        or not 0 <= max_black_ratio <= 1
+        or not 0 <= min_anchor_similarity <= 1
+    ):
         raise PipelineError("H3 quality ratios must be between 0 and 1")
     legacy_root_value = h3_config.get("reuse_output_dir")
     legacy_root = (
@@ -670,6 +675,7 @@ def h3_variant_spec(config: dict[str, Any], variant: dict[str, Any]) -> dict[str
         "max_attempts": max_attempts,
         "max_freeze_ratio": max_freeze_ratio,
         "max_black_ratio": max_black_ratio,
+        "min_anchor_similarity": min_anchor_similarity,
         "composition_direction": str(
             variant_overrides.get("composition_direction", default_composition)
         ),
@@ -683,6 +689,9 @@ def h3_variant_spec(config: dict[str, Any], variant: dict[str, Any]) -> dict[str
         "render_checkpoint": root / "h3_render.checkpoint.json",
         "shot_plan": resolve_path(
             h3_config.get("shot_plan_path", "backend/data/h3_shot_plan.json")
+        ),
+        "visual_memory": resolve_path(
+            h3_config.get("visual_memory_path", "output/character_visual_memory.json")
         ),
         "legacy_checkpoint": (
             legacy_root / "h3_clips.checkpoint.json" if legacy_root is not None else None
@@ -3694,6 +3703,17 @@ def step_video(config: dict[str, Any]) -> str:
                 enabled=config.get("illustrations", {}).get("prompt_audit_enabled", True),
             )
             dependencies.append(bgm_segments_path(config))
+            dependencies.append(character_cards_path(config))
+            if h3_spec is not None and h3_spec["visual_memory"].is_file():
+                dependencies.append(h3_spec["visual_memory"])
+            dependencies.extend(
+                path
+                for path in (
+                    performance_result_path(config),
+                    supplemental_performance_result_path(config),
+                )
+                if path.is_file()
+            )
             if config.get("illustrations", {}).get("prompt_audit_enabled", True):
                 dependencies.append(audit_path)
         else:
@@ -3742,6 +3762,7 @@ def step_video(config: dict[str, Any]) -> str:
                 "--max-attempts", str(h3_spec["max_attempts"]),
                 "--max-freeze-ratio", str(h3_spec["max_freeze_ratio"]),
                 "--max-black-ratio", str(h3_spec["max_black_ratio"]),
+                "--min-anchor-similarity", str(h3_spec["min_anchor_similarity"]),
                 "--composition-direction", str(h3_spec["composition_direction"]),
                 "--ffprobe", ffprobe_bin,
                 "--resume",
@@ -3753,6 +3774,12 @@ def step_video(config: dict[str, Any]) -> str:
                         "--scene-segments", str(bgm_segments_path(config)),
                         "--frames-dir", str(h3_spec["frames_dir"]),
                         "--max-chain-length", str(h3_spec["max_chain_length"]),
+                        "--character-cards", str(character_cards_path(config)),
+                        "--visual-memory", str(h3_spec["visual_memory"]),
+                        "--performance-directions", str(performance_result_path(config)),
+                        "--performance-directions", str(
+                            supplemental_performance_result_path(config)
+                        ),
                         "--ffmpeg", ffmpeg_bin,
                     ]
                 )
@@ -4046,6 +4073,17 @@ def stage_cache_status(stage: str, config: dict[str, Any]) -> tuple[bool, str]:
                     ),
                 )
                 dependencies.append(bgm_segments_path(config))
+                dependencies.append(character_cards_path(config))
+                if h3_spec is not None and h3_spec["visual_memory"].is_file():
+                    dependencies.append(h3_spec["visual_memory"])
+                dependencies.extend(
+                    path
+                    for path in (
+                        performance_result_path(config),
+                        supplemental_performance_result_path(config),
+                    )
+                    if path.is_file()
+                )
                 if config.get("illustrations", {}).get("prompt_audit_enabled", True):
                     dependencies.append(audit_path)
             else:

@@ -54,13 +54,13 @@ VoxCPM 会复用同一参考音频的 prompt cache，生成文件先写临时 WA
 
 ## 生成带字幕的 H3 动态视频
 
-完成 TTS 片段、最终混音、插图计划和提示词审核后，默认通过远程 MiniMax H3 的 `continuous-chain` 模式生成全时长动态镜头。程序按真实音频把 702 个粗镜头拆成 5～10 秒微镜头，以有限 I2VA 短链和主动 T2VA 切镜限制漂移；动态覆盖不足会直接失败，不再保持末帧。H3 音轨不会替换现有 VoxCPM+BGM。
+完成 TTS 片段、最终混音、插图计划和提示词审核后，默认通过远程 MiniMax H3 的 `continuous-chain` 模式生成全时长动态镜头。程序按真实音频把 702 个粗镜头拆成 5～10 秒微镜头，并把对应原文、说话人、逐句表演方向、角色卡及剧情阶段视觉状态写入每条提示词；以有限 I2VA 短链和主动 T2VA 切镜限制漂移。动态覆盖不足会直接失败，不再保持末帧。H3 音轨不会替换现有 VoxCPM+BGM。
 
 ```cmd
 .venv\Scripts\python.exe -u scripts\run_full.py --config config\config.yaml --from-stage video --to-stage video --log logs\h3_continuous_video.log
 ```
 
-任务可随时 `Ctrl+C`，同一命令会从远程 `job_id`、已下载视频、质量检查、续帧及本地编码分段继续。旧 `native-chain` 素材会在不覆盖原文件的前提下接受检查并迁入新断点。架构、服务接口、配置和耗时说明见 [`docs/MiniMax-H3视频集成.md`](docs/MiniMax-H3视频集成.md)。静态插图版仍可通过 `video.h3.enabled: false` 保留使用。
+任务可随时 `Ctrl+C`，同一命令会从远程 `job_id`、已下载视频、质量检查、续帧及本地编码分段继续。每条续写片段还会核对生成首帧与输入锚点，断裂时换随机结果重试。旧 `native-chain` 素材会在不覆盖原文件的前提下接受检查并迁入新断点。架构、服务接口、配置和耗时说明见 [`docs/MiniMax-H3视频集成.md`](docs/MiniMax-H3视频集成.md)。静态插图版仍可通过 `video.h3.enabled: false` 保留使用。
 
 全时长持续动画长片的分镜、关键帧、质量门禁、断点迁移、实测覆盖数据与无静止合成设计见 [`docs/MiniMax-H3全时长动态长片方案.md`](docs/MiniMax-H3全时长动态长片方案.md)。
 

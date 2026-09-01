@@ -9,6 +9,7 @@ from scripts.generate_h3_video import (
     scale_filter,
     segment_specs,
 )
+from scripts.generate_h3_native_clips import CONTINUOUS_CHECKPOINT_VERSION
 
 
 def test_scale_filter_normalizes_frame_rate_and_time_base():
@@ -196,7 +197,7 @@ def test_continuous_checkpoint_accepts_variable_clip_count_and_rejects_gap(tmp_p
     first.write_bytes(b"first")
     second.write_bytes(b"second")
     payload = {
-        "version": 2,
+        "version": CONTINUOUS_CHECKPOINT_VERSION,
         "mode": "continuous-chain",
         "clips": [
             {

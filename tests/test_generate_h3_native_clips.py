@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -7,8 +8,13 @@ from scripts.generate_h3_native_clips import (
     H3MotionQualityError,
     build_native_prompt,
     build_records,
+    build_identity_contexts,
+    attach_audio_locked_cues,
     continuous_duration_parts,
     extract_continuation_frame,
+    format_audio_context,
+    image_similarity,
+    inspect_anchor_quality,
     inspect_motion_quality,
     migrate_legacy_records,
     prepare_checkpoint,
@@ -151,6 +157,53 @@ def test_motion_quality_gate_rejects_long_freeze(tmp_path: Path, monkeypatch):
     assert exc.value.metrics["freeze_ratio"] == pytest.approx(0.7)
 
 
+def test_anchor_quality_gate_accepts_matching_frame_and_rejects_scene_break(
+    tmp_path: Path, monkeypatch
+):
+    from PIL import Image
+
+    reference = tmp_path / "reference.png"
+    matching = tmp_path / "matching.png"
+    different = tmp_path / "different.png"
+    Image.new("RGB", (32, 32), (180, 80, 40)).save(reference)
+    Image.new("RGB", (32, 32), (178, 82, 41)).save(matching)
+    Image.new("RGB", (32, 32), (25, 190, 220)).save(different)
+
+    assert image_similarity(reference, matching) > 0.98
+    assert image_similarity(reference, different) < 0.70
+
+    extracted_source = matching
+
+    def fake_extract(_clip, output, **_kwargs):
+        with Image.open(extracted_source) as image:
+            image.save(output)
+
+    monkeypatch.setattr(
+        "scripts.generate_h3_native_clips.extract_continuation_frame", fake_extract
+    )
+    metrics = inspect_anchor_quality(
+        tmp_path / "clip.mp4",
+        first_frame=reference,
+        last_frame=None,
+        media_duration_seconds=5.0,
+        ffmpeg="ffmpeg",
+        min_anchor_similarity=0.90,
+    )
+    assert metrics["status"] == "passed"
+
+    extracted_source = different
+    with pytest.raises(H3MotionQualityError) as exc:
+        inspect_anchor_quality(
+            tmp_path / "clip.mp4",
+            first_frame=reference,
+            last_frame=None,
+            media_duration_seconds=5.0,
+            ffmpeg="ffmpeg",
+            min_anchor_similarity=0.90,
+        )
+    assert exc.value.metrics["failed_anchor"] == "first_frame_similarity"
+
+
 def test_continuous_checkpoint_reuses_unchanged_records_after_local_plan_change(tmp_path: Path):
     timeline = [{"duration_ms": 6_000}, {"duration_ms": 6_000}]
     original = build_records(
@@ -275,6 +328,109 @@ def test_legacy_running_job_is_transferred_without_resubmission(tmp_path: Path):
     assert migrated == 1
     assert checkpoint["clips"][0]["job_id"] == "remote-job-73"
     assert checkpoint["clips"][0]["legacy_job_recovery"] is True
+
+
+def test_identity_context_combines_character_card_and_line_specific_visual_state(tmp_path: Path):
+    cards = tmp_path / "cards.md"
+    memory = tmp_path / "memory.json"
+    cards.write_text(
+        "| 角色名 | 外貌 | 服装 |\n|---|---|---|\n| 赫萝 | amber eyes | brown cloak |\n",
+        encoding="utf-8",
+    )
+    memory.write_text(
+        json.dumps(
+            {
+                "characters": {
+                    "赫萝": {
+                        "stable": {"identity": "wolf harvest deity"},
+                        "states": [
+                            {
+                                "start_line": 10,
+                                "end_line": 20,
+                                "expression": "quietly amused",
+                                "location": "inside the wagon",
+                            }
+                        ],
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    contexts = build_identity_contexts(
+        [
+            {
+                "characters": ["赫萝"],
+                "start_line": 12,
+                "end_line": 15,
+            }
+        ],
+        character_cards_path=cards,
+        visual_memory_path=memory,
+    )
+
+    assert "amber eyes" in contexts[0]
+    assert "brown cloak" in contexts[0]
+    assert "wolf harvest deity" in contexts[0]
+    assert "quietly amused" in contexts[0]
+
+
+def test_audio_locked_cues_align_each_micro_shot_with_speech_and_performance(tmp_path: Path):
+    timeline = [{"start_ms": 1_000, "end_ms": 13_000, "duration_ms": 12_000}]
+    records = build_records(
+        [{"start_line": 1, "title": "beat", "prompt": "beat"}],
+        timeline,
+        SCENES,
+        output_dir=tmp_path / "clips",
+        frames_dir=tmp_path / "frames",
+        minimum_duration=5,
+        maximum_duration=10,
+        limit=None,
+        mode="continuous-chain",
+    )
+    performance = tmp_path / "performance.json"
+    performance.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "0": {
+                        "dialogue_index": 0,
+                        "performance_control": "calm, deliberate gesture",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    entries = [
+        SimpleNamespace(text="first line", speaker="Narrator", source_line=1),
+        SimpleNamespace(text="second line", speaker="Holo", source_line=2),
+    ]
+    timestamps = [
+        {"start_ms": 1_000, "end_ms": 7_000},
+        {"start_ms": 7_000, "end_ms": 13_000},
+    ]
+    original_identities = [record["static_identity"] for record in records]
+
+    attach_audio_locked_cues(
+        records,
+        timeline,
+        entries,
+        timestamps,
+        performance_paths=[performance],
+    )
+
+    assert len(records) == 2
+    assert records[0]["source_lines"] == [1]
+    first_context = format_audio_context(records[0]["audio_cues"])
+    assert "[0.00s-6.00s]" in first_context
+    assert "first line" in first_context
+    assert "calm, deliberate gesture" in first_context
+    assert records[1]["source_lines"] == [2]
+    assert "second line" in format_audio_context(records[1]["audio_cues"])
+    assert [record["static_identity"] for record in records] != original_identities
 
 
 def test_continuation_frame_seek_stays_inside_last_video_frame(tmp_path: Path, monkeypatch):
