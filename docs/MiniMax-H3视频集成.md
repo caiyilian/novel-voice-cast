@@ -99,6 +99,14 @@ set "PYTHONUTF8=1"
 - 复用已经编码完成且指纹匹配的本地粗镜头分段；
 - 全部动态覆盖完成后才压制字幕和母音频。
 
+如果健康接口已经在线、但暂时返回 `comfyui: false`，可以使用守候启动器。它每 30 秒检查一次，不会提前提交任务；ComfyUI 恢复后自动启动上述长跑，并在启动前检查是否已有流水线，避免重复运行：
+
+```cmd
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts\run_h3_continuous_when_ready.ps1
+```
+
+守候状态记录在 `logs/h3_continuous_launcher.log`，正式流水线仍记录在 `logs/h3_continuous_video.log`。
+
 主要新断点：
 
 ```text
