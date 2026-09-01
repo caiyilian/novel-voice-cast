@@ -1,10 +1,12 @@
-"""Compose still frames and MiniMax H3 transitions with the existing audio.
+"""Compose MiniMax H3 story clips with the existing production audio.
 
 Each illustration interval is rendered as a frame-exact H.264 segment.  The
 interval holds its source illustration and, when available, plays an H3 FL2VA
 clip at the end so the generated clip lands on the following illustration.
 H3's generated audio is always discarded; VoxCPM speech, BGM, and subtitles
-remain the authoritative production timeline.
+remain the authoritative production timeline.  ``continuous-chain`` mode
+requires dynamic clips to cover every output frame and contains no still-frame
+padding path.
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from scripts.generate_h3_clips import (  # noqa: E402
     sha256_file,
     sha256_text,
 )
+from scripts.generate_h3_native_clips import CONTINUOUS_CHECKPOINT_VERSION  # noqa: E402
 from scripts.generate_video import (  # noqa: E402
     DEFAULT_VIDEO_HEIGHT,
     DEFAULT_VIDEO_WIDTH,
@@ -98,13 +101,25 @@ def run_command(command: list[str], *, timeout: float | None = None) -> None:
 
 def load_h3_checkpoint(path: Path, expected_transitions: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get("version") != H3_CHECKPOINT_VERSION:
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid H3 checkpoint: {path}")
+    mode = str(payload.get("mode", "illustration-bridge"))
+    expected_version = (
+        CONTINUOUS_CHECKPOINT_VERSION
+        if mode == "continuous-chain"
+        else H3_CHECKPOINT_VERSION
+    )
+    if payload.get("version") != expected_version:
         raise ValueError(f"Invalid H3 checkpoint version: {path}")
     records = payload.get("clips")
-    if not isinstance(records, list) or len(records) != expected_transitions:
+    if not isinstance(records, list):
+        raise ValueError("H3 checkpoint clips must be a list")
+    if mode != "continuous-chain" and len(records) != expected_transitions:
         raise ValueError(
             f"H3 checkpoint must contain {expected_transitions} transition records"
         )
+    if mode == "continuous-chain" and not records:
+        raise ValueError("Continuous H3 checkpoint is empty")
     for index, record in enumerate(records):
         if not isinstance(record, dict) or record.get("index") != index:
             raise ValueError(f"H3 checkpoint record {index} is invalid or misordered")
@@ -114,6 +129,39 @@ def load_h3_checkpoint(path: Path, expected_transitions: int) -> tuple[dict[str,
             output = record.get("output_file")
             if not output or not Path(str(output)).is_file():
                 raise ValueError(f"H3 transition {index + 1} output is missing")
+    if mode == "continuous-chain":
+        groups: dict[int, list[dict[str, Any]]] = {}
+        for record in records:
+            if record.get("status") != "success":
+                raise ValueError(f"Continuous H3 clip {int(record['index']) + 1} is not complete")
+            beat_index = int(record.get("beat_index", -1))
+            if not 0 <= beat_index < expected_transitions:
+                raise ValueError(f"Continuous H3 clip has invalid beat_index={beat_index}")
+            groups.setdefault(beat_index, []).append(record)
+        if set(groups) != set(range(expected_transitions)):
+            missing = sorted(set(range(expected_transitions)) - set(groups))
+            raise ValueError(f"Continuous H3 checkpoint misses beats: {missing[:10]}")
+        for beat_index, group in groups.items():
+            ordered = sorted(group, key=lambda item: int(item.get("part_index", -1)))
+            if [int(item.get("part_index", -1)) for item in ordered] != list(range(len(ordered))):
+                raise ValueError(f"Continuous H3 beat {beat_index + 1} parts are misordered")
+            if any(int(item.get("part_count", -1)) != len(ordered) for item in ordered):
+                raise ValueError(f"Continuous H3 beat {beat_index + 1} part_count is invalid")
+            cursor = 0.0
+            for item in ordered:
+                start = float(item.get("coverage_start_seconds", -1))
+                end = float(item.get("coverage_end_seconds", -1))
+                if abs(start - cursor) > 1e-5 or end <= start:
+                    raise ValueError(
+                        f"Continuous H3 beat {beat_index + 1} has a coverage gap at {cursor:.6f}s"
+                    )
+                cursor = end
+            interval = float(ordered[0].get("interval_duration", 0))
+            if abs(cursor - interval) > 1e-5:
+                raise ValueError(
+                    f"Continuous H3 beat {beat_index + 1} covers {cursor:.6f}s, "
+                    f"expected {interval:.6f}s"
+                )
     return payload, records
 
 
@@ -172,14 +220,119 @@ def segment_specs(
     if len(plan) != len(timeline):
         raise ValueError("Illustration plan and timeline counts do not match")
     specs: list[dict[str, Any]] = []
+    continuous_groups: dict[int, list[dict[str, Any]]] = {}
+    if h3_mode == "continuous-chain":
+        for record in h3_records:
+            continuous_groups.setdefault(int(record.get("beat_index", -1)), []).append(record)
     for index, item in enumerate(timeline):
         start_frame = round(int(item["start_ms"]) * fps / 1000)
         end_frame = round(int(item["end_ms"]) * fps / 1000)
         frame_count = end_frame - start_frame
+        if frame_count <= 0:
+            raise ValueError(f"Illustration beat {index + 1} has no timeline frames")
         clip: Path | None = None
         clip_duration: float | None = None
         placement = "end"
         record = h3_records[index] if index < len(h3_records) else None
+        if h3_mode == "continuous-chain":
+            group = sorted(
+                continuous_groups.get(index, []),
+                key=lambda value: int(value.get("part_index", -1)),
+            )
+            if not group:
+                raise ValueError(f"Continuous H3 beat {index + 1} has no dynamic clips")
+            clips: list[dict[str, Any]] = []
+            interval_duration = float(group[0].get("interval_duration", 0))
+            if interval_duration <= 0:
+                raise ValueError(f"Continuous H3 beat {index + 1} has invalid duration")
+            allocated_frames = 0
+            for part_index, part in enumerate(group):
+                if part.get("status") != "success":
+                    raise ValueError(
+                        f"Continuous H3 beat {index + 1} part {part_index + 1} is incomplete"
+                    )
+                part_start = round(
+                    float(part["coverage_start_seconds"]) / interval_duration * frame_count
+                )
+                part_end = (
+                    frame_count
+                    if part_index == len(group) - 1
+                    else round(
+                        float(part["coverage_end_seconds"])
+                        / interval_duration
+                        * frame_count
+                    )
+                )
+                target_frames = part_end - part_start
+                if part_start != allocated_frames or target_frames <= 0:
+                    raise ValueError(
+                        f"Continuous H3 beat {index + 1} has a frame coverage gap at "
+                        f"frame {allocated_frames}"
+                    )
+                path = Path(str(part.get("output_file", ""))).resolve()
+                if not path.is_file():
+                    raise ValueError(
+                        f"Continuous H3 beat {index + 1} part {part_index + 1} is missing"
+                    )
+                duration = float(part.get("duration_seconds") or 0)
+                available_frames = int(duration * fps + 1e-6)
+                if available_frames < target_frames:
+                    raise ValueError(
+                        f"Continuous H3 beat {index + 1} part {part_index + 1} has only "
+                        f"{available_frames} dynamic frames for {target_frames} required frames"
+                    )
+                clips.append(
+                    {
+                        "record_index": int(part["index"]),
+                        "path": path,
+                        "duration": duration,
+                        "target_frames": target_frames,
+                        "sha256": sha256_file(path),
+                    }
+                )
+                allocated_frames = part_end
+            if allocated_frames != frame_count:
+                raise ValueError(
+                    f"Continuous H3 beat {index + 1} covers {allocated_frames}/{frame_count} frames"
+                )
+            image = None
+            output = segments_output_dir / f"{index + 1:04d}.mp4"
+            fingerprint = sha256_text(
+                {
+                    "mode": h3_mode,
+                    "index": index,
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                    "fps": fps,
+                    "clips": [
+                        {
+                            "record_index": value["record_index"],
+                            "path": str(value["path"]),
+                            "duration": value["duration"],
+                            "target_frames": value["target_frames"],
+                            "sha256": value["sha256"],
+                        }
+                        for value in clips
+                    ],
+                }
+            )
+            specs.append(
+                {
+                    "index": index,
+                    "title": str(plan[index].get("title", "")),
+                    "image": image,
+                    "clip": None,
+                    "clips": clips,
+                    "clip_duration": None,
+                    "placement": "continuous",
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                    "frame_count": frame_count,
+                    "output": output.resolve(),
+                    "fingerprint": fingerprint,
+                }
+            )
+            continue
         if h3_mode == "native-chain":
             if record is None or record.get("status") != "success":
                 raise ValueError(f"Native H3 clip {index + 1} is not complete")
@@ -364,7 +517,60 @@ def render_segment(
     temporary = output.with_name(f".{output.stem}.{os.getpid()}.rendering{output.suffix}")
     temporary.unlink(missing_ok=True)
     output.parent.mkdir(parents=True, exist_ok=True)
-    if clip is None or clip_frames <= 0:
+    continuous_clips = spec.get("clips")
+    if isinstance(continuous_clips, list) and continuous_clips:
+        target_sum = sum(int(item["target_frames"]) for item in continuous_clips)
+        if target_sum != total_frames:
+            raise ValueError(
+                f"Continuous segment covers {target_sum}/{total_frames} frames"
+            )
+        inputs: list[str] = []
+        for item in continuous_clips:
+            inputs.extend(["-i", str(Path(item["path"]))])
+        if len(continuous_clips) == 1:
+            target = int(continuous_clips[0]["target_frames"])
+            command = [
+                ffmpeg,
+                "-y",
+                "-nostdin",
+                *inputs,
+                "-vf",
+                f"{base_filter},trim=end_frame={target},setpts=N/({fps}*TB)",
+                *common_output,
+                str(temporary),
+            ]
+        else:
+            filters = []
+            labels = []
+            for input_index, item in enumerate(continuous_clips):
+                label = f"v{input_index}"
+                labels.append(f"[{label}]")
+                filters.append(
+                    f"[{input_index}:v]{base_filter},"
+                    f"trim=end_frame={int(item['target_frames'])},"
+                    f"setpts=PTS-STARTPTS[{label}]"
+                )
+            filters.append(
+                "".join(labels)
+                + f"concat=n={len(labels)}:v=1:a=0[joined]"
+            )
+            filters.append(
+                f"[joined]fps={fps},settb=expr=1/{fps},"
+                f"trim=end_frame={total_frames},setpts=N/({fps}*TB)[outv]"
+            )
+            command = [
+                ffmpeg,
+                "-y",
+                "-nostdin",
+                *inputs,
+                "-filter_complex",
+                ";".join(filters),
+                "-map",
+                "[outv]",
+                *common_output,
+                str(temporary),
+            ]
+    elif clip is None or clip_frames <= 0:
         command = [
             ffmpeg,
             "-y",
@@ -682,7 +888,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     plan = load_plan(args.plan)
     raw_h3 = json.loads(args.h3_checkpoint.read_text(encoding="utf-8"))
     h3_mode = str(raw_h3.get("mode", "illustration-bridge")) if isinstance(raw_h3, dict) else ""
-    expected_records = len(plan) if h3_mode == "native-chain" else len(plan) - 1
+    expected_records = (
+        len(plan)
+        if h3_mode in {"native-chain", "continuous-chain"}
+        else len(plan) - 1
+    )
     h3_checkpoint, h3_records = load_h3_checkpoint(args.h3_checkpoint, expected_records)
     timeline, total_duration_ms = build_timeline_and_subtitles(
         plan,

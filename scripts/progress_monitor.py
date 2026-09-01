@@ -547,7 +547,11 @@ class ProgressCollector:
         segments = render_raw.get("segments", []) if isinstance(render_raw, dict) else []
         if not isinstance(segments, list):
             segments = []
-        expected_clips = fallback_total if mode == "native-chain" else max(0, fallback_total - 1)
+        expected_clips = (
+            fallback_total
+            if mode in {"native-chain", "continuous-chain"}
+            else max(0, fallback_total - 1)
+        )
         clip_total = len(clips) or expected_clips
         render_total = len(segments) or fallback_total
         clip_counts = Counter(
@@ -573,6 +577,9 @@ class ProgressCollector:
         render_success = render_counts["success"] + render_counts["skipped"]
         completed = clip_success + render_success + int(output_exists)
         total = clip_total + render_total + 1
+        coverage = raw.get("coverage", {}) if isinstance(raw, dict) else {}
+        if not isinstance(coverage, dict):
+            coverage = {}
         return {
             "name": name,
             "mode": mode,
@@ -583,6 +590,9 @@ class ProgressCollector:
             "clip_success": clip_success,
             "clip_running": sum(clip_counts[status] for status in active_statuses),
             "clip_failed": clip_counts["failed"],
+            "coverage_required_seconds": coverage.get("required_seconds"),
+            "coverage_completed_seconds": coverage.get("completed_seconds"),
+            "coverage_complete": coverage.get("complete", False),
             "render_total": render_total,
             "render_success": render_success,
             "output_exists": output_exists,
@@ -594,6 +604,9 @@ class ProgressCollector:
                     key: current.get(key)
                     for key in (
                         "index",
+                        "beat_index",
+                        "part_index",
+                        "part_count",
                         "title",
                         "status",
                         "attempts",

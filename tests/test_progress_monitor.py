@@ -155,3 +155,55 @@ video:
     assert h3["clip_running"] == 1
     assert h3["render_success"] == 1
     assert h3["current"]["job_id"] == "job-2"
+
+
+def test_collector_uses_actual_continuous_clip_count(tmp_path):
+    config = tmp_path / "config/config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        """
+illustrations:
+  prompt_audit_checkpoint_path: backend/data/audit.json
+video:
+  output_path: output/final.mp4
+  h3:
+    enabled: true
+    mode: continuous-chain
+    output_dir: output/h3_video_continuous
+""".strip(),
+        encoding="utf-8",
+    )
+    _write_json(
+        tmp_path / "backend/data/audit.json",
+        {"total_items": 2, "completed_indices": [0, 1], "results": [{}, {}], "errors": {}},
+    )
+    _write_json(
+        tmp_path / "output/h3_video_continuous/portrait/h3_clips.checkpoint.json",
+        {
+            "mode": "continuous-chain",
+            "coverage": {
+                "required_seconds": 20.0,
+                "completed_seconds": 5.0,
+                "complete": False,
+            },
+            "clips": [
+                {"index": 0, "beat_index": 0, "part_index": 0, "status": "success"},
+                {"index": 1, "beat_index": 0, "part_index": 1, "status": "running"},
+                {"index": 2, "beat_index": 1, "part_index": 0, "status": "pending"},
+                {"index": 3, "beat_index": 1, "part_index": 1, "status": "pending"},
+            ],
+        },
+    )
+
+    status = ProgressCollector(
+        tmp_path,
+        Path("config/config.yaml"),
+        process_probe=lambda: [{"pid": 123, "command": "generate_h3_native_clips.py"}],
+    ).collect()
+
+    h3 = status["h3_variants"][0]
+    assert h3["clip_total"] == 4
+    assert h3["clip_success"] == 1
+    assert h3["coverage_required_seconds"] == 20.0
+    assert h3["current"]["beat_index"] == 0
+    assert h3["current"]["part_index"] == 1
