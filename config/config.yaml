@@ -187,11 +187,13 @@ video:
     output_dir: "output/h3_video_continuous" # 新目录，保留旧版 702 条片段与成片
     reuse_output_dir: "output/h3_video"      # 审核并复用旧版每个区间的首条动态镜头
     shot_plan_path: "backend/data/h3_shot_plan.json"
+    visual_memory_path: "output/character_visual_memory.json" # 角色外貌、服装和阶段状态资产圣经
     minimum_duration: 5             # H3 官方优质训练区间下限
     maximum_duration: 10            # 质量优先；每条约需 15-20 分钟，最长可设 15
     max_chain_length: 3             # 最多连续续写 3 条，随后主动切镜重锚定以限制身份漂移
     max_freeze_ratio: 0.65          # 使用区间内最长近乎静止段不得超过 65%
     max_black_ratio: 0.20           # 使用区间内黑屏累计不得超过 20%
+    min_anchor_similarity: 0.90     # I2VA/FL2VA 首尾锚点不匹配时自动换随机种子重试
     request_timeout: 60
     poll_seconds: 15
     job_timeout: 14400              # 单任务最多等待 4 小时；断网时保留 job_id
