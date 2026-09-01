@@ -422,6 +422,86 @@ def test_illustration_and_video_variant_specs_keep_outputs_independent(tmp_path)
     ]
 
 
+def test_h3_variant_specs_use_independent_native_chain_caches(tmp_path):
+    config = make_config(tmp_path)
+    config["illustrations"] = {
+        "output_dir": str(tmp_path / "portrait-images"),
+        "checkpoint_path": str(tmp_path / "portrait-images.json"),
+        "size": "896x1152",
+        "landscape": {
+            "enabled": True,
+            "size": "1280x720",
+            "output_dir": str(tmp_path / "landscape-images"),
+            "checkpoint_path": str(tmp_path / "landscape-images.json"),
+        },
+    }
+    config["video"] = {
+        "output_path": str(tmp_path / "portrait.mp4"),
+        "h3": {
+            "enabled": True,
+            "mode": "native-chain",
+            "output_dir": str(tmp_path / "h3"),
+            "minimum_duration": 5,
+            "maximum_duration": 10,
+            "portrait": {"width": 672, "height": 864},
+            "landscape": {"width": 960, "height": 544},
+        },
+        "landscape": {
+            "enabled": True,
+            "output_path": str(tmp_path / "landscape.mp4"),
+        },
+    }
+
+    variants = run_full.video_variant_specs(config)
+    portrait = run_full.h3_variant_spec(config, variants[0])
+    landscape = run_full.h3_variant_spec(config, variants[1])
+
+    assert portrait["mode"] == "native-chain"
+    assert (portrait["width"], portrait["height"]) == (672, 864)
+    assert (landscape["width"], landscape["height"]) == (960, 544)
+    assert portrait["checkpoint"] != landscape["checkpoint"]
+    assert portrait["clips_dir"].parent.name == "portrait"
+    assert landscape["clips_dir"].parent.name == "landscape"
+
+
+def test_h3_variant_specs_reject_invalid_model_constraints(tmp_path):
+    config = make_config(tmp_path)
+    config["illustrations"] = {"size": "896x1152"}
+    config["video"] = {
+        "h3": {
+            "enabled": True,
+            "mode": "native-chain",
+            "portrait": {"width": 671, "height": 864},
+        }
+    }
+
+    with pytest.raises(run_full.PipelineError, match="multiples of 16"):
+        run_full.h3_variant_spec(config, run_full.video_variant_specs(config)[0])
+
+
+def test_native_h3_video_dry_run_does_not_require_legacy_illustrations(
+    tmp_path, monkeypatch, capsys
+):
+    config = make_config(tmp_path)
+    config["illustrations"] = {"size": "896x1152"}
+    config["video"] = {
+        "h3": {"enabled": True, "mode": "native-chain"},
+    }
+    monkeypatch.setattr(run_full, "validate_visual_prompt_audit", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        run_full,
+        "stage_cache_status",
+        lambda stage, _config: (False, "legacy illustrations are absent")
+        if stage == "illustrations"
+        else (False, "H3 output is not complete"),
+    )
+
+    assert run_full.dry_run_report(config, ("video",))
+    output = capsys.readouterr().out
+    assert "prerequisite visual-prompt-audit: READY" in output
+    assert "prerequisite illustrations" not in output
+
+
 def test_voice_assignment_uses_voxcpm_only_for_configured_characters(tmp_path):
     config = make_config(tmp_path)
 

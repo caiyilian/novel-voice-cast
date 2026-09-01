@@ -165,8 +165,9 @@ illustrations:
     composition_suffix: "cinematic 16:9 landscape frame, expand the environment horizontally, keep important faces and details clear of the lower subtitle-safe area"
 
 video:
-  output_path: "output/illustration_video_local_portrait_7x9_subtitled.mp4"
-  subtitle_path: "output/illustration_video_local_portrait_7x9_subtitles.srt"
+  # H3 成片使用独立文件名，保留已经完成的静态插画版作为可回退母版。
+  output_path: "output/h3_video_local_portrait_7x9_subtitled.mp4"
+  subtitle_path: "output/h3_video_local_portrait_7x9_subtitles.srt"
   ffmpeg: "D:/ffmpeg-7.1.1-full_build/bin/ffmpeg.exe"
   ffprobe: "D:/ffmpeg-7.1.1-full_build/bin/ffprobe.exe"
   subtitle_font: "SimHei"
@@ -179,10 +180,29 @@ video:
   audio_bitrate: "256k"
   timeout: 172800
   force: false
+  h3:
+    enabled: true
+    mode: "native-chain"             # 推荐：场景首段 T2V，同场景后续由上一段 H3 末帧 I2V 续写
+    endpoint: "http://172.31.102.189:8189"
+    output_dir: "output/h3_video"
+    minimum_duration: 5             # H3 官方优质训练区间下限
+    maximum_duration: 10            # 质量优先；每条约需 15-20 分钟，最长可设 15
+    request_timeout: 60
+    poll_seconds: 15
+    job_timeout: 14400              # 单任务最多等待 4 小时；断网时保留 job_id
+    max_attempts: 3                 # 服务明确失败后才换随机种子重提
+    generation_timeout: 15552000    # 两种画幅的全书长跑最多 180 天
+    render_timeout: 604800          # 本地混合分段与最终压制最多 7 天
+    portrait:
+      width: 672                    # 精确 7:9，宽高均为 16 的倍数
+      height: 864
+    landscape:
+      width: 960
+      height: 544
   landscape:
     enabled: true
-    output_path: "output/illustration_video_local_landscape_16x9_subtitled.mp4"
-    subtitle_path: "output/illustration_video_local_landscape_16x9_subtitles.srt"
+    output_path: "output/h3_video_local_landscape_16x9_subtitled.mp4"
+    subtitle_path: "output/h3_video_local_landscape_16x9_subtitles.srt"
     subtitle_font_size: 36
     max_subtitle_chars: 24
     max_subtitle_lines: 2

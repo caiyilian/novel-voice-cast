@@ -581,6 +581,119 @@ def video_variant_specs(config: dict[str, Any]) -> list[dict[str, Any]]:
     return values
 
 
+def h3_video_enabled(config: dict[str, Any]) -> bool:
+    value = config.get("video", {}).get("h3", {})
+    return isinstance(value, dict) and bool(value.get("enabled", False))
+
+
+def h3_variant_spec(config: dict[str, Any], variant: dict[str, Any]) -> dict[str, Any]:
+    """Resolve independent H3 generation and render caches for one aspect ratio."""
+
+    video_config = config.get("video", {})
+    h3_config = video_config.get("h3", {})
+    if not isinstance(h3_config, dict):
+        h3_config = {}
+    variant_overrides = h3_config.get(variant["name"], {})
+    if not isinstance(variant_overrides, dict):
+        variant_overrides = {}
+    defaults = (
+        {"width": 960, "height": 544}
+        if variant["name"] == "landscape"
+        else {"width": 672, "height": 864}
+    )
+    root = resolve_path(h3_config.get("output_dir", "output/h3_video")) / variant["name"]
+    mode = str(h3_config.get("mode", "native-chain")).strip().lower()
+    if mode not in {"native-chain", "illustration-bridge"}:
+        raise PipelineError(
+            "video.h3.mode must be 'native-chain' or 'illustration-bridge'"
+        )
+    width = int(variant_overrides.get("width", h3_config.get("width", defaults["width"])))
+    height = int(
+        variant_overrides.get("height", h3_config.get("height", defaults["height"]))
+    )
+    minimum_duration = int(h3_config.get("minimum_duration", 5))
+    maximum_duration = int(h3_config.get("maximum_duration", 10))
+    request_timeout = float(h3_config.get("request_timeout", 60.0))
+    poll_seconds = float(h3_config.get("poll_seconds", 15.0))
+    job_timeout = float(h3_config.get("job_timeout", 14400.0))
+    max_attempts = int(h3_config.get("max_attempts", 3))
+    generation_timeout = int(h3_config.get("generation_timeout", 15552000))
+    render_timeout = int(h3_config.get("render_timeout", 604800))
+    if width <= 0 or height <= 0 or width % 16 or height % 16:
+        raise PipelineError("H3 width and height must be positive multiples of 16")
+    if not 5 <= minimum_duration <= maximum_duration <= 15:
+        raise PipelineError("H3 duration range must satisfy 5 <= minimum <= maximum <= 15")
+    if min(request_timeout, poll_seconds, job_timeout) <= 0:
+        raise PipelineError("H3 request, poll, and job timeouts must be positive")
+    if max_attempts < 1 or generation_timeout <= 0 or render_timeout <= 0:
+        raise PipelineError("H3 attempts and pipeline timeouts must be positive")
+    return {
+        "mode": mode,
+        "endpoint": str(
+            variant_overrides.get(
+                "endpoint",
+                h3_config.get("endpoint", "http://172.31.102.189:8189"),
+            )
+        ).rstrip("/"),
+        "width": width,
+        "height": height,
+        "minimum_duration": minimum_duration,
+        "maximum_duration": maximum_duration,
+        "request_timeout": request_timeout,
+        "poll_seconds": poll_seconds,
+        "job_timeout": job_timeout,
+        "max_attempts": max_attempts,
+        "generation_timeout": generation_timeout,
+        "render_timeout": render_timeout,
+        "clips_dir": root / "clips",
+        "frames_dir": root / "continuation_frames",
+        "checkpoint": root / "h3_clips.checkpoint.json",
+        "segments_dir": root / "render_segments",
+        "render_checkpoint": root / "h3_render.checkpoint.json",
+    }
+
+
+def _completed_checkpoint_records(path: Path, key: str) -> tuple[int, int]:
+    payload = read_json(path, {})
+    records = payload.get(key) if isinstance(payload, dict) else None
+    if not isinstance(records, list):
+        return 0, 0
+    completed = sum(
+        1
+        for record in records
+        if isinstance(record, dict) and record.get("status") in {"success", "skipped"}
+    )
+    return completed, len(records)
+
+
+def h3_video_progress_probe(
+    config: dict[str, Any],
+    plan_count: int,
+) -> Callable[[], tuple[int, int, str]]:
+    variants = video_variant_specs(config)
+    h3_config = config.get("video", {}).get("h3", {})
+    mode = str(h3_config.get("mode", "native-chain")) if isinstance(h3_config, dict) else ""
+    clip_count = plan_count if mode == "native-chain" else max(0, plan_count - 1)
+    total_per_variant = clip_count + plan_count + 1
+    total = max(1, total_per_variant * len(variants))
+
+    def probe() -> tuple[int, int, str]:
+        completed = 0
+        for variant in variants:
+            spec = h3_variant_spec(config, variant)
+            clip_done, _ = _completed_checkpoint_records(spec["checkpoint"], "clips")
+            render_done, _ = _completed_checkpoint_records(
+                spec["render_checkpoint"], "segments"
+            )
+            completed += min(clip_count, clip_done)
+            completed += min(plan_count, render_done)
+            if nonempty_file(variant["output"]):
+                completed += 1
+        return completed, total, f"H3 过渡与成片：{completed}/{total}"
+
+    return probe
+
+
 def stage_slice(from_stage: str | None, to_stage: str | None) -> tuple[str, ...]:
     start = STAGES.index(from_stage) if from_stage else 0
     end = STAGES.index(to_stage) if to_stage else len(STAGES) - 1
@@ -3049,6 +3162,45 @@ def validate_illustration_plan(path: Path) -> list[str]:
     return problems
 
 
+def validate_visual_prompt_audit(
+    plan_path: Path,
+    checkpoint_path: Path,
+    *,
+    novel_path: Path,
+    character_cards: Path,
+    enabled: bool = True,
+) -> list[str]:
+    if not enabled:
+        return []
+    plan = load_illustration_plan(plan_path)
+    if not plan:
+        return ["illustration plan is missing or empty"]
+    from app.core.visual_prompt_auditor import (
+        VISUAL_PROMPT_PIPELINE_VERSION,
+        visual_prompt_source_hash,
+    )
+
+    audit = read_json(checkpoint_path, None)
+    if not isinstance(audit, dict):
+        return ["visual prompt audit checkpoint is missing or invalid"]
+    novel_text = novel_path.read_text(encoding="utf-8") if novel_path.is_file() else ""
+    cards_text = character_cards.read_text(encoding="utf-8") if character_cards.is_file() else ""
+    expected_hash = visual_prompt_source_hash(novel_text, plan, cards_text)
+    results = audit.get("results")
+    if (
+        audit.get("pipeline_version") != VISUAL_PROMPT_PIPELINE_VERSION
+        or audit.get("model") != SENSENOVA_FLASH_LITE_MODEL
+        or audit.get("total_items") != len(plan)
+        or audit.get("completed_indices") != list(range(len(plan)))
+        or audit.get("errors")
+        or audit.get("source_hash") != expected_hash
+        or not isinstance(results, list)
+        or len(results) != len(plan)
+    ):
+        return ["visual prompt audit checkpoint is incomplete or incompatible"]
+    return []
+
+
 def validate_illustrations(
     plan_path: Path,
     directory: Path,
@@ -3421,6 +3573,7 @@ def step_video(config: dict[str, Any]) -> str:
     video_config = config.get("video", {})
     ffmpeg_bin = str(video_config.get("ffmpeg", os.environ.get("FFMPEG_BIN", "ffmpeg")))
     ffprobe_bin = str(video_config.get("ffprobe", os.environ.get("FFPROBE_BIN", "ffprobe")))
+    use_h3 = h3_video_enabled(config)
     if not nonempty_file(audio):
         raise PipelineError(f"Cannot generate video; mixed audio is missing: {audio}")
     outputs = []
@@ -3432,22 +3585,95 @@ def step_video(config: dict[str, Any]) -> str:
         video = variant["output"]
         subtitle = variant["subtitle"]
         options = variant["options"]
-        image_files = sorted(directory.glob("*.png"))
+        h3_spec = h3_variant_spec(config, variant) if use_h3 else None
+        native_h3 = h3_spec is not None and h3_spec["mode"] == "native-chain"
+        image_files = [] if native_h3 else sorted(directory.glob("*.png"))
         dependencies = [plan_path, audio, *image_files]
-        illustration_problems = validate_illustrations(
-            plan_path,
-            directory,
-            checkpoint,
-            visual_prompt_checkpoint_path(config),
-            **illustration_validation_options(
-                config,
-                settings=settings,
-                composition_suffix=illustration["composition_suffix"],
-            ),
-        )
+        if native_h3:
+            audit_path = visual_prompt_checkpoint_path(config)
+            illustration_problems = validate_visual_prompt_audit(
+                plan_path,
+                audit_path,
+                novel_path=resolve_path(config["novel"]["text_path"]),
+                character_cards=character_cards_path(config),
+                enabled=config.get("illustrations", {}).get("prompt_audit_enabled", True),
+            )
+            dependencies.append(bgm_segments_path(config))
+            if config.get("illustrations", {}).get("prompt_audit_enabled", True):
+                dependencies.append(audit_path)
+        else:
+            illustration_problems = validate_illustrations(
+                plan_path,
+                directory,
+                checkpoint,
+                visual_prompt_checkpoint_path(config),
+                **illustration_validation_options(
+                    config,
+                    settings=settings,
+                    composition_suffix=illustration["composition_suffix"],
+                ),
+            )
         if illustration_problems:
             raise PipelineError(
                 f"Cannot generate {variant['name']} video: {illustration_problems[:5]}"
+            )
+        if use_h3:
+            assert h3_spec is not None
+            h3_command = [
+                sys.executable,
+                str(
+                    ROOT
+                    / (
+                        "scripts/generate_h3_native_clips.py"
+                        if h3_spec["mode"] == "native-chain"
+                        else "scripts/generate_h3_clips.py"
+                    )
+                ),
+                "--plan", str(plan_path),
+                "--novel", str(resolve_path(config["novel"]["text_path"])),
+                "--labels", str(resolve_path(config["novel"]["labels_path"])),
+                "--segments-dir", str(output_dir(config) / "segments"),
+                "--audio", str(audio),
+                "--output-dir", str(h3_spec["clips_dir"]),
+                "--checkpoint", str(h3_spec["checkpoint"]),
+                "--endpoint", str(h3_spec["endpoint"]),
+                "--width", str(h3_spec["width"]),
+                "--height", str(h3_spec["height"]),
+                "--minimum-duration", str(h3_spec["minimum_duration"]),
+                "--maximum-duration", str(h3_spec["maximum_duration"]),
+                "--request-timeout", str(h3_spec["request_timeout"]),
+                "--poll-seconds", str(h3_spec["poll_seconds"]),
+                "--job-timeout", str(h3_spec["job_timeout"]),
+                "--max-attempts", str(h3_spec["max_attempts"]),
+                "--ffprobe", ffprobe_bin,
+                "--resume",
+            ]
+            if h3_spec["mode"] == "native-chain":
+                h3_command.extend(
+                    [
+                        "--scene-segments", str(bgm_segments_path(config)),
+                        "--frames-dir", str(h3_spec["frames_dir"]),
+                        "--ffmpeg", ffmpeg_bin,
+                    ]
+                )
+            else:
+                h3_command.extend(["--images-dir", str(directory)])
+            if config.get("illustrations", {}).get("prompt_audit_enabled", True):
+                h3_command.extend(
+                    [
+                        "--prompt-audit-checkpoint",
+                        str(visual_prompt_checkpoint_path(config)),
+                    ]
+                )
+            run_checked_subprocess(h3_command, int(h3_spec["generation_timeout"]))
+            h3_clip_files = sorted(h3_spec["clips_dir"].glob("*.mp4"))
+            dependencies.extend(
+                [
+                    h3_spec["checkpoint"],
+                    *h3_clip_files,
+                    h3_spec["render_checkpoint"],
+                    *sorted(h3_spec["segments_dir"].glob("*.mp4")),
+                ]
             )
         cached_duration_matches = (
             nonempty_file(video)
@@ -3456,20 +3682,44 @@ def step_video(config: dict[str, Any]) -> str:
                 - media_duration_seconds(audio, ffprobe_bin)
             ) <= 1.0
         )
+        h3_cache_complete = True
+        if h3_spec is not None:
+            plan_count = len(load_illustration_plan(plan_path))
+            expected_clip_count = (
+                plan_count
+                if h3_spec["mode"] == "native-chain"
+                else max(0, plan_count - 1)
+            )
+            clip_done, clip_total = _completed_checkpoint_records(
+                h3_spec["checkpoint"], "clips"
+            )
+            render_done, render_total = _completed_checkpoint_records(
+                h3_spec["render_checkpoint"], "segments"
+            )
+            h3_cache_complete = (
+                clip_total == expected_clip_count
+                and clip_done == clip_total
+                and render_total == plan_count
+                and render_done == render_total
+            )
         if (
             not options.get("force", False)
+            and h3_cache_complete
             and dependencies_are_older(video, dependencies)
             and cached_duration_matches
         ):
             print(f"  using cached {variant['name']} video: {video}")
             outputs.append(video)
             continue
-        run_checked_subprocess(
-            [
+        if use_h3:
+            assert h3_spec is not None
+            compose_command = [
                 sys.executable,
-                str(ROOT / "scripts/generate_video.py"),
+                str(ROOT / "scripts/generate_h3_video.py"),
                 "--plan", str(plan_path),
-                "--illustrations-dir", str(directory),
+                "--h3-checkpoint", str(h3_spec["checkpoint"]),
+                "--segments-output-dir", str(h3_spec["segments_dir"]),
+                "--render-checkpoint", str(h3_spec["render_checkpoint"]),
                 "--audio", str(audio),
                 "--output", str(video),
                 "--size", str(settings["size"]),
@@ -3487,9 +3737,44 @@ def step_video(config: dict[str, Any]) -> str:
                 "--audio-bitrate", str(options.get("audio_bitrate", "256k")),
                 "--ffmpeg", ffmpeg_bin,
                 "--ffprobe", ffprobe_bin,
-            ],
-            int(options.get("timeout", 86400)),
-        )
+                "--resume",
+            ]
+            if h3_spec["mode"] == "illustration-bridge":
+                compose_command.extend(["--images-dir", str(directory)])
+            run_checked_subprocess(compose_command, int(h3_spec["render_timeout"]))
+            dependencies.extend(
+                [
+                    h3_spec["render_checkpoint"],
+                    *sorted(h3_spec["segments_dir"].glob("*.mp4")),
+                ]
+            )
+        else:
+            run_checked_subprocess(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts/generate_video.py"),
+                    "--plan", str(plan_path),
+                    "--illustrations-dir", str(directory),
+                    "--audio", str(audio),
+                    "--output", str(video),
+                    "--size", str(settings["size"]),
+                    "--novel", str(resolve_path(config["novel"]["text_path"])),
+                    "--labels", str(resolve_path(config["novel"]["labels_path"])),
+                    "--segments-dir", str(output_dir(config) / "segments"),
+                    "--subtitle-output", str(subtitle),
+                    "--subtitle-font", str(options.get("subtitle_font", "SimHei")),
+                    "--subtitle-font-size", str(options.get("subtitle_font_size", 42)),
+                    "--max-subtitle-chars", str(options.get("max_subtitle_chars", 16)),
+                    "--max-subtitle-lines", str(options.get("max_subtitle_lines", 2)),
+                    "--fps", str(options.get("fps", 25)),
+                    "--crf", str(options.get("crf", 18)),
+                    "--preset", str(options.get("preset", "slow")),
+                    "--audio-bitrate", str(options.get("audio_bitrate", "256k")),
+                    "--ffmpeg", ffmpeg_bin,
+                    "--ffprobe", ffprobe_bin,
+                ],
+                int(options.get("timeout", 86400)),
+            )
         if (
             not nonempty_file(video)
             or not dependencies_are_older(video, dependencies)
@@ -3625,6 +3910,7 @@ def stage_cache_status(stage: str, config: dict[str, Any]) -> tuple[bool, str]:
     if stage == "video":
         audio = mixed_audio_path(config)
         plan_path = illustration_plan_path(config)
+        plan_count = len(load_illustration_plan(plan_path))
         ffprobe_bin = str(
             config.get("video", {}).get("ffprobe", os.environ.get("FFPROBE_BIN", "ffprobe"))
         )
@@ -3632,24 +3918,64 @@ def stage_cache_status(stage: str, config: dict[str, Any]) -> tuple[bool, str]:
         for variant in video_variant_specs(config):
             illustration = variant["illustrations"]
             path = variant["output"]
-            illustration_problems = validate_illustrations(
-                plan_path,
-                illustration["directory"],
-                illustration["checkpoint"],
-                visual_prompt_checkpoint_path(config),
-                **illustration_validation_options(
-                    config,
-                    settings=illustration["settings"],
-                    composition_suffix=illustration["composition_suffix"],
-                ),
-            )
-            dependencies = [
-                plan_path,
-                audio,
-                *sorted(illustration["directory"].glob("*.png")),
-            ]
+            h3_spec = h3_variant_spec(config, variant) if h3_video_enabled(config) else None
+            native_h3 = h3_spec is not None and h3_spec["mode"] == "native-chain"
+            dependencies = [plan_path, audio]
+            if native_h3:
+                audit_path = visual_prompt_checkpoint_path(config)
+                illustration_problems = validate_visual_prompt_audit(
+                    plan_path,
+                    audit_path,
+                    novel_path=resolve_path(config["novel"]["text_path"]),
+                    character_cards=character_cards_path(config),
+                    enabled=config.get("illustrations", {}).get(
+                        "prompt_audit_enabled", True
+                    ),
+                )
+                dependencies.append(bgm_segments_path(config))
+                if config.get("illustrations", {}).get("prompt_audit_enabled", True):
+                    dependencies.append(audit_path)
+            else:
+                illustration_problems = validate_illustrations(
+                    plan_path,
+                    illustration["directory"],
+                    illustration["checkpoint"],
+                    visual_prompt_checkpoint_path(config),
+                    **illustration_validation_options(
+                        config,
+                        settings=illustration["settings"],
+                        composition_suffix=illustration["composition_suffix"],
+                    ),
+                )
+                dependencies.extend(sorted(illustration["directory"].glob("*.png")))
+            h3_problems: list[str] = []
+            if h3_spec is not None:
+                expected_clip_count = (
+                    plan_count
+                    if h3_spec["mode"] == "native-chain"
+                    else max(0, plan_count - 1)
+                )
+                clip_done, clip_total = _completed_checkpoint_records(
+                    h3_spec["checkpoint"], "clips"
+                )
+                render_done, render_total = _completed_checkpoint_records(
+                    h3_spec["render_checkpoint"], "segments"
+                )
+                if clip_total != expected_clip_count or clip_done != clip_total:
+                    h3_problems.append("H3 clip checkpoint is incomplete")
+                if render_total != plan_count or render_done != render_total:
+                    h3_problems.append("H3 render checkpoint is incomplete")
+                dependencies.extend(
+                    [
+                        h3_spec["checkpoint"],
+                        h3_spec["render_checkpoint"],
+                        *sorted(h3_spec["clips_dir"].glob("*.mp4")),
+                        *sorted(h3_spec["segments_dir"].glob("*.mp4")),
+                    ]
+                )
             valid = (
                 not illustration_problems
+                and not h3_problems
                 and nonempty_file(path)
                 and nonempty_file(audio)
                 and dependencies_are_older(path, dependencies)
@@ -3662,7 +3988,8 @@ def stage_cache_status(stage: str, config: dict[str, Any]) -> tuple[bool, str]:
                 problems.extend(
                     f"{variant['name']}: {problem}" for problem in illustration_problems
                 )
-                if not illustration_problems:
+                problems.extend(f"{variant['name']}: {problem}" for problem in h3_problems)
+                if not illustration_problems and not h3_problems:
                     problems.append(f"{variant['name']}: video is missing, stale, or has wrong duration")
         return not problems, "; ".join(problems) or ", ".join(
             str(variant["output"]) for variant in video_variant_specs(config)
@@ -3675,10 +4002,40 @@ def dry_run_report(config: dict[str, Any], selected: tuple[str, ...]) -> bool:
     first_index = STAGES.index(selected[0])
     prerequisites_ok = True
     if first_index:
-        prerequisite = STAGES[first_index - 1]
-        valid, detail = stage_cache_status(prerequisite, config)
-        print(f"  prerequisite {prerequisite}: {'READY' if valid else 'MISSING'} - {detail}")
-        prerequisites_ok = valid
+        if selected[0] == "video" and h3_video_enabled(config):
+            h3_modes = {
+                h3_variant_spec(config, variant)["mode"]
+                for variant in video_variant_specs(config)
+            }
+            if h3_modes == {"native-chain"}:
+                problems = validate_visual_prompt_audit(
+                    illustration_plan_path(config),
+                    visual_prompt_checkpoint_path(config),
+                    novel_path=resolve_path(config["novel"]["text_path"]),
+                    character_cards=character_cards_path(config),
+                    enabled=config.get("illustrations", {}).get(
+                        "prompt_audit_enabled", True
+                    ),
+                )
+                prerequisites_ok = not problems
+                detail = "; ".join(problems) or str(visual_prompt_checkpoint_path(config))
+                print(
+                    "  prerequisite visual-prompt-audit: "
+                    f"{'READY' if prerequisites_ok else 'MISSING'} - {detail}"
+                )
+            else:
+                prerequisite = STAGES[first_index - 1]
+                valid, detail = stage_cache_status(prerequisite, config)
+                print(
+                    f"  prerequisite {prerequisite}: "
+                    f"{'READY' if valid else 'MISSING'} - {detail}"
+                )
+                prerequisites_ok = valid
+        else:
+            prerequisite = STAGES[first_index - 1]
+            valid, detail = stage_cache_status(prerequisite, config)
+            print(f"  prerequisite {prerequisite}: {'READY' if valid else 'MISSING'} - {detail}")
+            prerequisites_ok = valid
     for stage in selected:
         valid, detail = stage_cache_status(stage, config)
         if len(detail) > 500:
@@ -4125,6 +4482,7 @@ def main(argv: list[str] | None = None) -> int:
                 progress_probe=illustration_progress_probe(config, illustration_plan_count),
             )
         if "video" in selected:
+            video_plan_count = len(load_illustration_plan(illustration_plan_path(config)))
             execute_stage(
                 recorder,
                 "video",
@@ -4133,6 +4491,11 @@ def main(argv: list[str] | None = None) -> int:
                     result,
                     *[variant["output"] for variant in video_variant_specs(config)],
                 ],
+                progress_probe=(
+                    h3_video_progress_probe(config, video_plan_count)
+                    if h3_video_enabled(config)
+                    else None
+                ),
             )
     except KeyboardInterrupt:
         if stop_watcher is not None:
