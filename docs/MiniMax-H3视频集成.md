@@ -105,7 +105,7 @@ set "PYTHONUTF8=1"
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts\run_h3_continuous_when_ready.ps1
 ```
 
-守候状态记录在 `logs/h3_continuous_launcher.log`，正式流水线仍记录在 `logs/h3_continuous_video.log`。
+监督状态记录在 `logs/h3_continuous_launcher.log`。每次实际拉起还会创建带时间戳的 `logs/h3_continuous_YYYYMMDD_HHMMSS.stdout.log` 与 `.stderr.log`，即使发生原生进程崩溃也能保留该次运行末尾。
 
 主要新断点：
 
