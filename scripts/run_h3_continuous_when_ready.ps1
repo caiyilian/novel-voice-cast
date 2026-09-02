@@ -95,13 +95,29 @@ while ($true) {
 
     $before = Get-CompletionMarker
     $started = Get-Date
-    Write-LauncherLog "h3_ready starting_pipeline completion=$before"
-    & $python -u "scripts\run_full.py" `
-        --config $Config `
-        --from-stage video `
-        --to-stage video `
-        --log $PipelineLog
-    $exitCode = $LASTEXITCODE
+    $runStamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $runStdout = Join-Path $root "logs\h3_continuous_$runStamp.stdout.log"
+    $runStderr = Join-Path $root "logs\h3_continuous_$runStamp.stderr.log"
+    $pipelineArguments = @(
+        "-u",
+        "scripts\run_full.py",
+        "--config", $Config,
+        "--from-stage", "video",
+        "--to-stage", "video",
+        "--log", $PipelineLog
+    )
+    Write-LauncherLog (
+        "h3_ready starting_pipeline completion=$before stdout=$runStdout stderr=$runStderr"
+    )
+    $pipeline = Start-Process -FilePath $python `
+        -ArgumentList $pipelineArguments `
+        -WorkingDirectory $root `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $runStdout `
+        -RedirectStandardError $runStderr `
+        -PassThru `
+        -Wait
+    $exitCode = $pipeline.ExitCode
     $elapsed = [Math]::Round(((Get-Date) - $started).TotalSeconds, 1)
     $after = Get-CompletionMarker
     Write-LauncherLog "pipeline_exited code=$exitCode elapsed_seconds=$elapsed completion=$after"

@@ -43,6 +43,7 @@ backend/data/voices/
 backend/data/performance_directions*.json
 backend/data/performance_profiles*.json
 backend/data/visual_prompt_audit.checkpoint.json
+backend/data/h3_shot_plan.json
 
 # Local model runtimes and checkpoints
 ACE-Step-1.5/
