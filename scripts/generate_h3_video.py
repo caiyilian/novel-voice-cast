@@ -59,7 +59,9 @@ from scripts.generate_video import (  # noqa: E402
 
 
 LOGGER = logging.getLogger("h3_video")
-RENDER_CHECKPOINT_VERSION = 1
+RENDER_CHECKPOINT_VERSION = 2
+MAX_CONTINUOUS_RETIME_SECONDS = 0.12
+MAX_CONTINUOUS_RETIME_RATIO = 1.03
 
 
 def utc_now() -> str:
@@ -90,6 +92,27 @@ def scale_filter(width: int, height: int, fps: int) -> str:
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=increase,"
         f"crop={width}:{height},setsar=1,fps={fps},settb=expr=1/{fps}"
+    )
+
+
+def continuous_clip_filter(
+    base_filter: str,
+    *,
+    target_frames: int,
+    available_frames: int,
+    fps: int,
+) -> str:
+    """Fit a continuous source clip to its frame allocation without a still hold."""
+    if available_frames >= target_frames:
+        return (
+            f"{base_filter},trim=end_frame={target_frames},"
+            "setpts=PTS-STARTPTS"
+        )
+    return (
+        f"{base_filter},"
+        f"setpts=({target_frames}/{available_frames})*(PTS-STARTPTS),"
+        f"fps={fps},settb=expr=1/{fps},"
+        f"trim=end_frame={target_frames},setpts=PTS-STARTPTS"
     )
 
 
@@ -276,16 +299,37 @@ def segment_specs(
                     )
                 duration = float(part.get("duration_seconds") or 0)
                 available_frames = int(duration * fps + 1e-6)
-                if available_frames < target_frames:
+                shortfall_frames = target_frames - available_frames
+                max_shortfall_frames = max(
+                    2,
+                    round(MAX_CONTINUOUS_RETIME_SECONDS * fps),
+                )
+                retime_ratio = (
+                    target_frames / available_frames if available_frames > 0 else float("inf")
+                )
+                if (
+                    shortfall_frames > max_shortfall_frames
+                    or retime_ratio > MAX_CONTINUOUS_RETIME_RATIO
+                ):
                     raise ValueError(
                         f"Continuous H3 beat {index + 1} part {part_index + 1} has only "
                         f"{available_frames} dynamic frames for {target_frames} required frames"
+                    )
+                if shortfall_frames > 0:
+                    LOGGER.warning(
+                        "Continuous H3 beat %d part %d is %d CFR frames short; "
+                        "retiming motion by %.3f%% instead of inserting a still hold",
+                        index + 1,
+                        part_index + 1,
+                        shortfall_frames,
+                        (retime_ratio - 1.0) * 100.0,
                     )
                 clips.append(
                     {
                         "record_index": int(part["index"]),
                         "path": path,
                         "duration": duration,
+                        "available_frames": available_frames,
                         "target_frames": target_frames,
                         "sha256": sha256_file(path),
                     }
@@ -309,6 +353,7 @@ def segment_specs(
                             "record_index": value["record_index"],
                             "path": str(value["path"]),
                             "duration": value["duration"],
+                            "available_frames": value["available_frames"],
                             "target_frames": value["target_frames"],
                             "sha256": value["sha256"],
                         }
@@ -529,13 +574,19 @@ def render_segment(
             inputs.extend(["-i", str(Path(item["path"]))])
         if len(continuous_clips) == 1:
             target = int(continuous_clips[0]["target_frames"])
+            clip_filter = continuous_clip_filter(
+                base_filter,
+                target_frames=target,
+                available_frames=int(continuous_clips[0]["available_frames"]),
+                fps=fps,
+            )
             command = [
                 ffmpeg,
                 "-y",
                 "-nostdin",
                 *inputs,
                 "-vf",
-                f"{base_filter},trim=end_frame={target},setpts=N/({fps}*TB)",
+                clip_filter,
                 *common_output,
                 str(temporary),
             ]
@@ -545,10 +596,14 @@ def render_segment(
             for input_index, item in enumerate(continuous_clips):
                 label = f"v{input_index}"
                 labels.append(f"[{label}]")
+                clip_filter = continuous_clip_filter(
+                    base_filter,
+                    target_frames=int(item["target_frames"]),
+                    available_frames=int(item["available_frames"]),
+                    fps=fps,
+                )
                 filters.append(
-                    f"[{input_index}:v]{base_filter},"
-                    f"trim=end_frame={int(item['target_frames'])},"
-                    f"setpts=PTS-STARTPTS[{label}]"
+                    f"[{input_index}:v]{clip_filter}[{label}]"
                 )
             filters.append(
                 "".join(labels)
