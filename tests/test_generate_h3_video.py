@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from scripts.generate_h3_video import (
+    continuous_clip_filter,
     load_h3_checkpoint,
     render_segment,
     scale_filter,
@@ -151,6 +152,75 @@ def test_continuous_segment_groups_clips_for_full_frame_coverage(tmp_path: Path)
     assert specs[0]["image"] is None
 
 
+def test_continuous_segment_retimestamps_small_encoder_rounding_shortfall(
+    tmp_path: Path,
+):
+    clip = tmp_path / "short.mp4"
+    clip.write_bytes(b"clip")
+
+    specs = segment_specs(
+        [{"title": "beat"}],
+        [{"start_ms": 0, "end_ms": 7_360}],
+        [
+            {
+                "index": 0,
+                "beat_index": 0,
+                "part_index": 0,
+                "status": "success",
+                "output_file": str(clip),
+                "duration_seconds": 7.292,
+                "coverage_start_seconds": 0.0,
+                "coverage_end_seconds": 7.36,
+                "interval_duration": 7.36,
+            }
+        ],
+        h3_mode="continuous-chain",
+        images_dir=None,
+        segments_output_dir=tmp_path / "segments",
+        fps=25,
+    )
+
+    source = specs[0]["clips"][0]
+    assert source["available_frames"] == 182
+    assert source["target_frames"] == 184
+    value = continuous_clip_filter(
+        scale_filter(864, 480, 25),
+        target_frames=source["target_frames"],
+        available_frames=source["available_frames"],
+        fps=25,
+    )
+    assert "setpts=(184/182)*(PTS-STARTPTS)" in value
+    assert "trim=end_frame=184" in value
+
+
+def test_continuous_segment_rejects_material_dynamic_shortfall(tmp_path: Path):
+    clip = tmp_path / "short.mp4"
+    clip.write_bytes(b"clip")
+
+    with pytest.raises(ValueError, match="dynamic frames"):
+        segment_specs(
+            [{"title": "beat"}],
+            [{"start_ms": 0, "end_ms": 8_000}],
+            [
+                {
+                    "index": 0,
+                    "beat_index": 0,
+                    "part_index": 0,
+                    "status": "success",
+                    "output_file": str(clip),
+                    "duration_seconds": 7.0,
+                    "coverage_start_seconds": 0.0,
+                    "coverage_end_seconds": 8.0,
+                    "interval_duration": 8.0,
+                }
+            ],
+            h3_mode="continuous-chain",
+            images_dir=None,
+            segments_output_dir=tmp_path / "segments",
+            fps=25,
+        )
+
+
 def test_continuous_renderer_never_uses_still_frame_padding(tmp_path: Path, monkeypatch):
     first = tmp_path / "first.mp4"
     second = tmp_path / "second.mp4"
@@ -169,8 +239,8 @@ def test_continuous_renderer_never_uses_still_frame_padding(tmp_path: Path, monk
             "frame_count": 300,
             "clip": None,
             "clips": [
-                {"path": first, "target_frames": 150},
-                {"path": second, "target_frames": 150},
+                {"path": first, "available_frames": 150, "target_frames": 150},
+                {"path": second, "available_frames": 150, "target_frames": 150},
             ],
         },
         output=output,
