@@ -78,3 +78,6 @@ whl_files/
 config/agnes_api_key
 config/sensenova_apikeys
 .githubtoken.txt
+
+# WorkBuddy workspace memory
+.workbuddy/
