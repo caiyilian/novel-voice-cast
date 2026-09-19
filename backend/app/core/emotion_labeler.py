@@ -18,6 +18,7 @@ EMOTIONS = ["happy", "sad", "angry", "surprised", "calm", "nervous", "cold"]
 TONES = ["loud", "soft", "stutter", "sarcastic", "gentle", "serious", "whisper"]
 DEFAULT_CHECKPOINT = Path("backend/data/emotion_results.checkpoint.json")
 EMOTION_PIPELINE_VERSION = 2
+RECENT_MEMORY_SIZE = 5
 
 
 class EmotionBatchError(RuntimeError):
@@ -270,7 +271,11 @@ def _run_primary(
     max_tool_steps: int,
     memory: str,
 ) -> dict[str, Any]:
-    del memory  # Nearby source context is the continuity source; prior labels can anchor the model.
+    memory_block = (
+        f"\n\nRecent emotional context of earlier lines:\n{memory}"
+        if memory
+        else ""
+    )
     trace_id = f"emotion:{dialogue_index}:line:{dialogue_line}"
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -279,7 +284,8 @@ def _run_primary(
             "content": (
                 f"Target source line: {dialogue_line}\n"
                 f"Target speaker: {speaker or 'unknown'}\n"
-                f"Target dialogue verbatim:\n<<<{dialogue_text}>>>\n\n"
+                f"Target dialogue verbatim:\n<<<{dialogue_text}>>>"
+                f"{memory_block}\n\n"
                 f"Nearby source context (the target is explicitly marked):\n{index.context(dialogue_line)}"
             ),
         },
@@ -326,6 +332,7 @@ def _run_review(
     index: NovelIndex,
     client: LLMClient,
     review_role: str = "independent verifier",
+    memory: str = "",
 ) -> dict[str, Any]:
     is_adjudicator = candidate is not None
     role_instruction = (
@@ -334,6 +341,11 @@ def _run_review(
         if is_adjudicator
         else "You are an independent verifier. Make a fresh decision from the source only; "
         "the primary decision is intentionally hidden to prevent anchoring."
+    )
+    memory_block = (
+        f"\n\nRecent emotional context of earlier lines:\n{memory}"
+        if memory
+        else ""
     )
     candidate_text = ""
     if candidate:
@@ -361,6 +373,7 @@ def _run_review(
                 f"Target source line: {dialogue_line}\n"
                 f"Target speaker: {speaker or 'unknown'}\n"
                 f"Target dialogue verbatim:\n<<<{dialogue_text}>>>"
+                f"{memory_block}"
                 f"{candidate_text}\n\n"
                 f"Nearby source context (the target is explicitly marked):\n{index.context(dialogue_line)}"
             ),
@@ -419,7 +432,7 @@ def label_emotion(
     reviewed = False
     if always_verify or primary["confidence"] < verification_threshold:
         reviewed = True
-        review = _run_review(None, dialogue_text, dialogue_line, dialogue_index, speaker, index, client)
+        review = _run_review(None, dialogue_text, dialogue_line, dialogue_index, speaker, index, client, memory=memory)
         if (review["emotion"], review["tone"]) == (primary["emotion"], primary["tone"]):
             final = dict(primary)
             final["confidence"] = round((primary["confidence"] + review["confidence"]) / 2, 4)
@@ -438,6 +451,7 @@ def label_emotion(
                 index,
                 client,
                 review_role="final adjudicator resolving a disagreement between two agents",
+                memory=memory,
             )
             final["adjudicated"] = True
             final["decision_path"] = "adjudicated_disagreement"
@@ -447,6 +461,16 @@ def label_emotion(
     final["reviewed"] = reviewed
     final["agent_calls"] = client.usage_summary()["calls"] - calls_before
     return final
+
+
+def _build_recent_memory(recent: list[dict[str, Any]]) -> str:
+    """Serialize the most recent labeled dialogues as a compact continuity hint."""
+    if not recent:
+        return ""
+    return " | ".join(
+        f"{item.get('speaker', '?')}: {item.get('emotion', '?')}/{item.get('tone', '?')}"
+        for item in recent
+    )
 
 
 def label_all_emotions(
@@ -507,6 +531,17 @@ def label_all_emotions(
         except (OSError, json.JSONDecodeError, TypeError):
             logger.warning("Ignoring invalid emotion checkpoint: %s", checkpoint)
 
+    recent: list[dict[str, Any]] = []
+    for idx in sorted((int(k) for k in results if str(k).isdigit())):
+        item = results[str(idx)]
+        recent.append({
+            "speaker": str(dialogues[idx].get("speaker", "")).strip(),
+            "emotion": item.get("emotion"),
+            "tone": item.get("tone"),
+        })
+        if len(recent) > RECENT_MEMORY_SIZE:
+            recent.pop(0)
+
     newly_processed = 0
     for dialogue_index, dialogue in enumerate(dialogues):
         key = str(dialogue_index)
@@ -515,6 +550,7 @@ def label_all_emotions(
             continue
         if key in results:
             continue
+        memory = _build_recent_memory(recent)
         last_error: Optional[Exception] = None
         item_calls_before = client.usage_summary()["calls"]
         for attempt in range(1, item_retries + 1):
@@ -528,6 +564,7 @@ def label_all_emotions(
                     max_tool_steps=max_tool_steps,
                     speaker=speaker,
                     dialogues=dialogues,
+                    memory=memory,
                     _index=index,
                 )
                 value["agent_calls"] = client.usage_summary()["calls"] - item_calls_before
@@ -538,6 +575,14 @@ def label_all_emotions(
             except Exception as exc:
                 last_error = exc
                 logger.warning("Emotion index %s attempt %d/%d failed: %s", key, attempt, item_retries, exc)
+        if key in results:
+            recent.append({
+                "speaker": speaker,
+                "emotion": results[key].get("emotion"),
+                "tone": results[key].get("tone"),
+            })
+            if len(recent) > RECENT_MEMORY_SIZE:
+                recent.pop(0)
         if key not in results:
             errors[key] = str(last_error)
         if checkpoint:
