@@ -124,8 +124,8 @@ def test_flash_lite_mode_has_no_fallback_and_writes_usage(tmp_path, monkeypatch)
         agent_round=2,
     )
 
-    assert result.model == "sensenova-6.7-flash-lite"
-    assert client.context_window_tokens == 262144
+    assert result.model == "deepseek-v4-flash"
+    assert client.context_window_tokens == 1024 * 1024
     assert calls[0]["account_index"] == 0
     assert client.allow_agnes_fallback is False
     record = llm_client.json.loads(telemetry.read_text(encoding="utf-8"))
@@ -141,12 +141,12 @@ def test_flash_lite_mode_has_no_fallback_and_writes_usage(tmp_path, monkeypatch)
     assert record["context_utilization"] > record["prompt_context_utilization"]
 
 
-def test_rate_limited_account_rotates_to_next_key(tmp_path, monkeypatch):
+def test_rate_limited_retries_same_account(tmp_path, monkeypatch):
     attempts = []
 
     def fake_call(**kwargs):
         attempts.append(kwargs["account_index"])
-        if kwargs["account_index"] == 0:
+        if len(attempts) < 2:
             raise RateLimited("short limit")
         return LLMResult(
             content="ok",
@@ -156,43 +156,14 @@ def test_rate_limited_account_rotates_to_next_key(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(LLMClient, "_call_openai", staticmethod(fake_call))
-    client = LLMClient.for_flash_lite(
-        "rotation",
-        tmp_path / "calls.jsonl",
-        sensenova_keys=["a", "b"],
-        quota_state_path=None,
-    )
+    client = LLMClient.for_flash_lite("retry", tmp_path / "calls.jsonl", api_key="key")
+    monkeypatch.setattr(client, "_sleep", lambda s: None)
 
     result = client.chat([{"role": "user", "content": "hello"}])
 
-    assert attempts == [0, 1]
-    assert result.account_index == 1
-
-
-def test_invalid_credentials_disable_only_one_account(tmp_path, monkeypatch):
-    attempts = []
-
-    def fake_call(**kwargs):
-        attempts.append(kwargs["account_index"])
-        if kwargs["account_index"] == 0:
-            raise InvalidCredentials("bad key")
-        return LLMResult(
-            content="ok",
-            model=kwargs["model"],
-            account_index=kwargs["account_index"],
-            usage={"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
-        )
-
-    monkeypatch.setattr(LLMClient, "_call_openai", staticmethod(fake_call))
-    client = LLMClient.for_flash_lite(
-        "credentials",
-        tmp_path / "calls.jsonl",
-        sensenova_keys=["bad", "good"],
-        quota_state_path=None,
-    )
-
-    assert client.chat([{"role": "user", "content": "hello"}]).account_index == 1
-    assert attempts == [0, 1]
+    # 单账号代理：RateLimited 触发同账号重试（而非轮询到下一个 key）
+    assert result.account_index == 0
+    assert attempts == [0, 0]
 
 
 def test_flash_lite_rejects_prompt_plus_completion_over_its_own_window():

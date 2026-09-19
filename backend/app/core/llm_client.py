@@ -1,8 +1,14 @@
-"""OpenAI-compatible multi-account LLM client.
+"""Thin OpenAI-compatible LLM client for the SenseNova Pool local proxy.
 
-The default client preserves the illustration planner's DeepSeek -> Agnes
-chain.  ``for_flash_lite`` is the strict SenseNova-only mode used by gender,
-emotion, and BGM agents.
+All LLM stages (gender / emotion / performance / bgm) share one model:
+``deepseek-v4-flash`` served by the local 20-account round-robin proxy at
+``http://127.0.0.1:18787/v1``.  Multi-key rotation, per-account cooldowns and
+the Agnes fallback have been removed — the proxy handles load balancing, so
+this client is a single-endpoint, single-key wrapper around one POST.
+
+The public surface (``LLMClient`` / ``LLMResult`` / ``ToolCall`` / the
+exception classes / ``for_flash_lite``) is kept backward-compatible so the
+four stage modules keep working unchanged.
 """
 
 from __future__ import annotations
@@ -12,7 +18,6 @@ import logging
 import os
 import time
 import uuid
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,70 +46,56 @@ class LLMResult:
     elapsed_seconds: float = 0.0
 
 
-SENSENOVA_BASE = "https://token.sensenova.cn/v1"
-AGNES_BASE = "https://apihub.agnes-ai.com/v1"
-AGNES_PROXY = os.environ.get("AGNES_PROXY_URL", "http://127.0.0.1:7890")
-SENSENOVA_MODEL = "deepseek-v4-flash"
-SENSENOVA_FLASH_LITE_MODEL = "sensenova-6.7-flash-lite"
-SENSENOVA_FLASH_LITE_CONTEXT_TOKENS = 256 * 1024
-AGNES_MODEL = "agnes-2.0-flash"
+# --- 本地代理配置（非敏感：base_url 可提交；apiKey 从 config/llm_proxy_key 读） ---
+PROXY_BASE_URL = os.environ.get("LLM_PROXY_URL", "http://127.0.0.1:18787/v1")
+PROXY_API_KEY_ENV = "LLM_PROXY_API_KEY"
+KEY_FILE_PROXY = Path("config/llm_proxy_key")
 
+# 统一模型：所有 LLM 阶段都用 deepseek-v4-flash。
+# SENSENOVA_FLASH_LITE_MODEL 保留旧名字以兼容各阶段模块的 import 与 checkpoint 校验，
+# 但值统一为 deepseek-v4-flash，使历史「钉死 flash-lite」的引用自动对齐到新模型。
+SENSENOVA_MODEL = "deepseek-v4-flash"
+SENSENOVA_FLASH_LITE_MODEL = "deepseek-v4-flash"
+DEFAULT_MODEL = SENSENOVA_MODEL
+
+# deepseek-v4-flash 官方 context window = 1M。
+DEFAULT_CONTEXT_WINDOW_TOKENS = 1024 * 1024
 MODEL_CONTEXT_WINDOWS = {
-    SENSENOVA_FLASH_LITE_MODEL: SENSENOVA_FLASH_LITE_CONTEXT_TOKENS,
+    SENSENOVA_MODEL: DEFAULT_CONTEXT_WINDOW_TOKENS,
 }
 
-SENSENOVA_QUOTA_COOLDOWN_SECONDS = int(
-    os.environ.get("SENSENOVA_QUOTA_COOLDOWN_SECONDS", str(5 * 60 * 60))
-)
-SENSENOVA_RETRY_COOLDOWN_SECONDS = int(
-    os.environ.get("SENSENOVA_RETRY_COOLDOWN_SECONDS", "60")
-)
-SENSENOVA_RATE_LIMIT_COOLDOWN_SECONDS = int(
-    os.environ.get("SENSENOVA_RATE_LIMIT_COOLDOWN_SECONDS", "15")
-)
-SENSENOVA_CALLS_PER_WINDOW = int(os.environ.get("SENSENOVA_CALLS_PER_WINDOW", "1500"))
-SENSENOVA_WINDOW_SECONDS = int(os.environ.get("SENSENOVA_WINDOW_SECONDS", str(5 * 60 * 60)))
-
-KEY_FILE_SENSENOVA = Path("config/sensenova_apikeys")
-KEY_FILE_AGNES = Path("config/agnes_api_key")
-DEFAULT_QUOTA_STATE_PATH = Path("logs/sensenova_quota_state.json")
+RATE_LIMIT_RETRY_SECONDS = 15.0
+MAX_TRANSIENT_RETRIES = 3
 
 
 class LLMClient:
-    """Multi-account client with rotation, cooldowns, and call telemetry."""
+    """Single-endpoint, single-key OpenAI-compatible client with telemetry."""
 
     def __init__(
         self,
         *,
-        sensenova_model: str = SENSENOVA_MODEL,
-        allow_agnes_fallback: bool = True,
-        wait_for_sensenova: bool = False,
+        sensenova_model: str = DEFAULT_MODEL,
         module_name: str = "general",
         telemetry_path: Path | str | None = None,
         context_window_tokens: Optional[int] = None,
-        quota_state_path: Path | str | None = DEFAULT_QUOTA_STATE_PATH,
-        sensenova_keys: Optional[list[str]] = None,
-        agnes_key: Optional[str] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         sleep_fn: Callable[[float], None] = time.sleep,
     ):
         self.sensenova_model = sensenova_model
-        self.allow_agnes_fallback = allow_agnes_fallback
-        self.wait_for_sensenova = wait_for_sensenova
         self.module_name = module_name
         self.telemetry_path = Path(telemetry_path) if telemetry_path else None
-        inferred_context_window = MODEL_CONTEXT_WINDOWS.get(sensenova_model, 32768)
-        self.context_window_tokens = max(1, int(context_window_tokens or inferred_context_window))
-        self.quota_state_path = Path(quota_state_path) if quota_state_path else None
-        self._sensenova_keys = list(sensenova_keys) if sensenova_keys is not None else _load_lines(KEY_FILE_SENSENOVA)
-        self._agnes_key = agnes_key if agnes_key is not None else _load_first_line(KEY_FILE_AGNES)
+        inferred_context = MODEL_CONTEXT_WINDOWS.get(sensenova_model, DEFAULT_CONTEXT_WINDOW_TOKENS)
+        self.context_window_tokens = max(1, int(context_window_tokens or inferred_context))
+        self.base_url = (base_url or PROXY_BASE_URL).rstrip("/")
+        self.api_key = api_key if api_key is not None else _load_api_key()
         self._sleep = sleep_fn
-        self._round_robin_index = 0
+        # 兼容旧属性：单账号代理下不存在 fallback / 等待轮询。
+        self.allow_agnes_fallback = False
+        self.wait_for_sensenova = True
         self._call_sequence = 0
         self.run_id = uuid.uuid4().hex
-        self._sensenova_disabled_until = [0.0 for _ in self._sensenova_keys]
-        self._account_calls = [deque() for _ in self._sensenova_keys]
         self._totals = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        self._load_quota_state()
 
     @classmethod
     def for_flash_lite(
@@ -113,18 +104,22 @@ class LLMClient:
         telemetry_path: Path | str | None = None,
         **kwargs: Any,
     ) -> "LLMClient":
-        """Build the strict client required by issue #99.
+        """Build the client used by gender / emotion / performance / BGM.
 
-        There is deliberately no fallback model.  If every account is cooling
-        down, the caller waits instead of silently changing model behavior.
+        Historical callers pass ``sensenova_keys`` / ``agnes_key`` /
+        ``quota_state_path``; those are ignored (single proxy account now).
+        ``context_window_tokens`` / ``api_key`` / ``base_url`` still pass through.
         """
+        context_window_tokens = kwargs.pop("context_window_tokens", None)
+        api_key = kwargs.pop("api_key", None)
+        base_url = kwargs.pop("base_url", None)
         return cls(
             sensenova_model=SENSENOVA_FLASH_LITE_MODEL,
-            allow_agnes_fallback=False,
-            wait_for_sensenova=True,
             module_name=module_name,
             telemetry_path=telemetry_path or Path("logs") / f"{module_name}_llm_calls.jsonl",
-            **kwargs,
+            context_window_tokens=context_window_tokens,
+            api_key=api_key,
+            base_url=base_url,
         )
 
     def chat(
@@ -139,7 +134,7 @@ class LLMClient:
         agent_round: Optional[int] = None,
         extra_body: Optional[dict[str, Any]] = None,
     ) -> LLMResult:
-        """Send one logical completion, rotating accounts when needed."""
+        """Send one completion, retrying transient / rate-limit failures."""
         self._ensure_context_fits(
             self.sensenova_model,
             messages,
@@ -147,52 +142,17 @@ class LLMClient:
             max_tokens,
             self.context_window_tokens,
         )
-        if not self._sensenova_keys and not (self.allow_agnes_fallback and self._agnes_key):
-            raise AllModelsExhausted("No SenseNova API keys configured")
+        if not self.api_key:
+            raise AllModelsExhausted("No LLM proxy API key configured")
 
-        attempted: set[int] = set()
-        while True:
-            idx = self._next_sensenova_index(exclude=attempted)
-            if idx is None:
-                if self.allow_agnes_fallback and self._agnes_key:
-                    self._ensure_context_fits(AGNES_MODEL, messages, tools, max_tokens, 32768)
-                    logger.info("All SenseNova accounts unavailable; falling back to %s", AGNES_MODEL)
-                    return self._request_and_record(
-                        base_url=AGNES_BASE,
-                        model=AGNES_MODEL,
-                        api_key=self._agnes_key,
-                        account_index=-1,
-                        messages=messages,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        proxy=AGNES_PROXY,
-                        agent_role=agent_role,
-                        trace_id=trace_id,
-                        agent_round=agent_round,
-                        extra_body=extra_body,
-                    )
-                if not self.wait_for_sensenova:
-                    raise AllModelsExhausted("All SenseNova accounts are in cooldown")
-                wait_seconds = self._seconds_until_available()
-                logger.warning(
-                    "All %d SenseNova accounts unavailable; waiting %.1fs for the earliest cooldown",
-                    len(self._sensenova_keys),
-                    wait_seconds,
-                )
-                self._sleep(max(0.05, wait_seconds))
-                attempted.clear()
-                continue
-
-            attempted.add(idx)
-            self._reserve_account_call(idx)
+        last_error: Optional[Exception] = None
+        for attempt in range(MAX_TRANSIENT_RETRIES):
             try:
                 return self._request_and_record(
-                    base_url=SENSENOVA_BASE,
+                    base_url=self.base_url,
                     model=self.sensenova_model,
-                    api_key=self._sensenova_keys[idx],
-                    account_index=idx,
+                    api_key=self.api_key,
+                    account_index=0,
                     messages=messages,
                     tools=tools,
                     tool_choice=tool_choice,
@@ -204,27 +164,22 @@ class LLMClient:
                     agent_round=agent_round,
                     extra_body=extra_body,
                 )
-            except InsufficientQuota as exc:
-                self._disable_sensenova_key(idx, SENSENOVA_QUOTA_COOLDOWN_SECONDS)
-                logger.warning("SenseNova account %d quota unavailable; cooldown %ds: %s", idx + 1, SENSENOVA_QUOTA_COOLDOWN_SECONDS, exc)
             except RateLimited as exc:
-                self._disable_sensenova_key(idx, SENSENOVA_RATE_LIMIT_COOLDOWN_SECONDS)
-                logger.warning("SenseNova account %d rate limited; cooldown %ds: %s", idx + 1, SENSENOVA_RATE_LIMIT_COOLDOWN_SECONDS, exc)
-            except RetryableError as exc:
-                self._disable_sensenova_key(idx, SENSENOVA_RETRY_COOLDOWN_SECONDS)
-                logger.warning("SenseNova account %d retryable failure: %s", idx + 1, exc)
-            except InvalidCredentials as exc:
-                self._disable_sensenova_key(idx, SENSENOVA_QUOTA_COOLDOWN_SECONDS)
-                logger.error(
-                    "SenseNova account %d credentials rejected; disabled and rotating: %s",
-                    idx + 1,
-                    exc,
+                last_error = exc
+                logger.warning(
+                    "Rate limited; retrying in %.0fs (attempt %d/%d): %s",
+                    RATE_LIMIT_RETRY_SECONDS, attempt + 1, MAX_TRANSIENT_RETRIES, exc,
                 )
-            except FatalLLMError:
-                raise
-            except Exception as exc:
-                self._disable_sensenova_key(idx, SENSENOVA_RETRY_COOLDOWN_SECONDS)
-                logger.warning("SenseNova account %d failed: %s", idx + 1, exc)
+                self._sleep(RATE_LIMIT_RETRY_SECONDS)
+            except RetryableError as exc:
+                last_error = exc
+                wait = float(2 ** attempt)
+                logger.warning(
+                    "Transient failure; retrying in %.1fs (attempt %d/%d): %s",
+                    wait, attempt + 1, MAX_TRANSIENT_RETRIES, exc,
+                )
+                self._sleep(wait)
+        raise last_error if last_error is not None else AllModelsExhausted("LLM request failed")
 
     @staticmethod
     def _ensure_context_fits(
@@ -311,79 +266,6 @@ class LLMClient:
         )
         return result
 
-    def _next_sensenova_index(self, exclude: set[int] | None = None) -> Optional[int]:
-        exclude = exclude or set()
-        now = time.time()
-        self._prune_call_windows(now)
-        count = len(self._sensenova_keys)
-        for _ in range(count):
-            idx = self._round_robin_index % count
-            self._round_robin_index += 1
-            if idx in exclude:
-                continue
-            if len(self._account_calls[idx]) >= SENSENOVA_CALLS_PER_WINDOW:
-                oldest = self._account_calls[idx][0]
-                self._sensenova_disabled_until[idx] = max(
-                    self._sensenova_disabled_until[idx], oldest + SENSENOVA_WINDOW_SECONDS
-                )
-            if self._sensenova_disabled_until[idx] <= now:
-                return idx
-        return None
-
-    def _seconds_until_available(self) -> float:
-        now = time.time()
-        self._prune_call_windows(now)
-        waits = []
-        for idx, disabled_until in enumerate(self._sensenova_disabled_until):
-            quota_until = 0.0
-            if len(self._account_calls[idx]) >= SENSENOVA_CALLS_PER_WINDOW:
-                quota_until = self._account_calls[idx][0] + SENSENOVA_WINDOW_SECONDS
-            waits.append(max(disabled_until, quota_until) - now)
-        return max(0.05, min(waits)) if waits else 0.05
-
-    def _disable_sensenova_key(self, idx: int, seconds: int) -> None:
-        self._sensenova_disabled_until[idx] = max(
-            self._sensenova_disabled_until[idx], time.time() + max(0, seconds)
-        )
-        self._save_quota_state()
-
-    def _reserve_account_call(self, idx: int) -> None:
-        self._account_calls[idx].append(time.time())
-        self._save_quota_state()
-
-    def _prune_call_windows(self, now: float) -> None:
-        cutoff = now - SENSENOVA_WINDOW_SECONDS
-        for calls in self._account_calls:
-            while calls and calls[0] <= cutoff:
-                calls.popleft()
-
-    def _load_quota_state(self) -> None:
-        if not self.quota_state_path or not self.quota_state_path.exists():
-            return
-        try:
-            raw = json.loads(self.quota_state_path.read_text(encoding="utf-8"))
-            for idx, values in enumerate(raw.get("account_calls", [])):
-                if idx < len(self._account_calls):
-                    self._account_calls[idx].extend(float(value) for value in values)
-            for idx, value in enumerate(raw.get("disabled_until", [])):
-                if idx < len(self._sensenova_disabled_until):
-                    self._sensenova_disabled_until[idx] = float(value)
-            self._prune_call_windows(time.time())
-        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
-            logger.warning("Ignoring invalid SenseNova quota state %s: %s", self.quota_state_path, exc)
-
-    def _save_quota_state(self) -> None:
-        if not self.quota_state_path:
-            return
-        payload = {
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "window_seconds": SENSENOVA_WINDOW_SECONDS,
-            "calls_per_window": SENSENOVA_CALLS_PER_WINDOW,
-            "account_calls": [list(calls) for calls in self._account_calls],
-            "disabled_until": self._sensenova_disabled_until,
-        }
-        _atomic_write_json(self.quota_state_path, payload)
-
     def _write_telemetry(
         self,
         messages: list[dict],
@@ -402,11 +284,7 @@ class LLMClient:
     ) -> None:
         estimated_context = _estimate_prompt_tokens(messages, tools)
         context_tokens = int(usage.get("prompt_tokens", 0)) or estimated_context
-        context_window = (
-            self.context_window_tokens
-            if model == self.sensenova_model
-            else MODEL_CONTEXT_WINDOWS.get(model, 32768)
-        )
+        context_window = self.context_window_tokens
         reserved_context = context_tokens + max(0, requested_max_tokens)
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -498,7 +376,7 @@ class LLMClient:
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
                 last_error = RetryableError(str(exc))
                 if attempt + 1 < request_attempts:
-                    time.sleep(2**attempt)
+                    time.sleep(2 ** attempt)
                     continue
                 raise last_error
 
@@ -514,11 +392,6 @@ class LLMClient:
                 raise InsufficientQuota(f"HTTP 400: {error_body}")
             if response.status_code in {401, 403}:
                 raise InvalidCredentials(f"HTTP {response.status_code} on {model}: {error_body}")
-            # SenseNova can return a short-lived, account-specific 404 even
-            # while the same model is working on the other accounts.  Treat
-            # only that explicit routing response as retryable so ``chat``
-            # rotates to the next key.  A genuine bad endpoint/model 404
-            # remains fatal instead of being hidden by endless rotation.
             if response.status_code == 404 and _looks_like_model_route_error(error_body):
                 raise RetryableError(f"HTTP 404 on {model}: {error_body}")
             if response.status_code in {400, 404, 422}:
@@ -526,7 +399,7 @@ class LLMClient:
             if response.status_code >= 500:
                 last_error = RetryableError(f"HTTP {response.status_code}: {error_body}")
                 if attempt + 1 < request_attempts:
-                    time.sleep(2**attempt)
+                    time.sleep(2 ** attempt)
                     continue
                 raise last_error
             raise RuntimeError(f"Unexpected HTTP {response.status_code} on {model}: {error_body}")
@@ -536,8 +409,10 @@ class LLMClient:
         return dict(self._totals)
 
     def log_summary(self) -> str:
-        fallback = "agnes fallback" if self.allow_agnes_fallback and self._agnes_key else "no fallback"
-        return f"LLMClient(model={self.sensenova_model}, keys={len(self._sensenova_keys)}, {fallback})"
+        return (
+            f"LLMClient(model={self.sensenova_model}, endpoint={self.base_url}, "
+            f"single proxy key)"
+        )
 
 
 def _parse_response(raw: dict, model: str, account_index: int, elapsed: float = 0.0) -> LLMResult:
@@ -600,16 +475,16 @@ def _normalise_usage(
     }
 
 
-def _load_lines(path: Path) -> list[str]:
-    if not path.exists():
-        logger.warning("Key file not found: %s", path)
-        return []
-    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-
-
-def _load_first_line(path: Path) -> Optional[str]:
-    lines = _load_lines(path)
-    return lines[0] if lines else None
+def _load_api_key() -> Optional[str]:
+    env_key = os.environ.get(PROXY_API_KEY_ENV)
+    if env_key:
+        return env_key
+    if KEY_FILE_PROXY.exists():
+        lines = KEY_FILE_PROXY.read_text(encoding="utf-8").strip().splitlines()
+        if lines:
+            return lines[0].strip()
+    logger.warning("LLM proxy key not found (env %s or %s)", PROXY_API_KEY_ENV, KEY_FILE_PROXY)
+    return None
 
 
 def _looks_like_quota_error(text: str) -> bool:
@@ -640,20 +515,6 @@ def _looks_like_model_route_error(text: str) -> bool:
     )
 
 
-def _atomic_write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    for attempt in range(6):
-        try:
-            temporary.replace(path)
-            return
-        except PermissionError:
-            if attempt == 5:
-                raise
-            time.sleep(0.1 * (2**attempt))
-
-
 class InsufficientQuota(Exception):
     """The account has no currently usable quota."""
 
@@ -663,15 +524,15 @@ class RateLimited(Exception):
 
 
 class RetryableError(Exception):
-    """The request may succeed on another account."""
+    """The request may succeed on retry."""
 
 
 class FatalLLMError(Exception):
-    """A request/model/authentication error that account rotation cannot fix."""
+    """A request/model/authentication error that retrying cannot fix."""
 
 
 class InvalidCredentials(FatalLLMError):
-    """One account rejected its credentials; other accounts may still work."""
+    """Credentials rejected."""
 
 
 class ContextWindowExceeded(FatalLLMError):
@@ -679,4 +540,4 @@ class ContextWindowExceeded(FatalLLMError):
 
 
 class AllModelsExhausted(Exception):
-    """No configured model/account can currently serve the request."""
+    """No configured model can currently serve the request."""
