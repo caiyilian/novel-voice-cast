@@ -77,7 +77,11 @@ whl_files/
 # API Keys (never commit)
 config/agnes_api_key
 config/sensenova_apikeys
+config/llm_proxy_key
 .githubtoken.txt
 
 # WorkBuddy workspace memory
 .workbuddy/
+
+# 重构调研文档（含 local apiKey，不提交）
+docs/refactor-research.md

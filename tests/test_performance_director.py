@@ -49,7 +49,7 @@ DIALOGUES = [
 
 
 class FakeClient:
-    sensenova_model = "sensenova-6.7-flash-lite"
+    sensenova_model = "deepseek-v4-flash"
 
     def __init__(self, responses=None, initial_usage=None):
         self.responses = list(responses or [])
@@ -454,7 +454,7 @@ def test_direction_checkpoint_expansion_reuses_unaffected_and_regenerates_contin
         "meta": {
             "pipeline_version": PERFORMANCE_DIRECTION_PIPELINE_VERSION,
             "prompt_signature": PERFORMANCE_PROMPT_SIGNATURE,
-            "model": "sensenova-6.7-flash-lite",
+            "model": "deepseek-v4-flash",
             "source_hash": performance_direction_source_hash(
                 novel, [0, 1, 2], dialogues, expanded_profiles, {}
             ),
@@ -489,7 +489,7 @@ def test_final_payload_validation_binds_source_and_continuity(tmp_path):
         "meta": {
                 "pipeline_version": PERFORMANCE_DIRECTION_PIPELINE_VERSION,
                 "prompt_signature": PERFORMANCE_PROMPT_SIGNATURE,
-            "model": "sensenova-6.7-flash-lite",
+            "model": "deepseek-v4-flash",
             "source_hash": source_hash,
         },
         "results": results,
@@ -632,7 +632,7 @@ def test_final_payload_requires_auditable_three_stage_chain(tmp_path):
         "meta": {
             "pipeline_version": PERFORMANCE_DIRECTION_PIPELINE_VERSION,
             "prompt_signature": PERFORMANCE_PROMPT_SIGNATURE,
-            "model": "sensenova-6.7-flash-lite",
+            "model": "deepseek-v4-flash",
             "source_hash": performance_direction_source_hash(NOVEL, [0], DIALOGUES, profiles, {}),
         },
         "results": copy.deepcopy(results),

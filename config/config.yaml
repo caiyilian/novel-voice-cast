@@ -5,11 +5,12 @@ novel:
   text_path: "novels/novel.txt"        # 小说文本路径
   labels_path: "novels/labels.txt"     # 角色标注路径
 
-# Issue #99 LLM stages use every non-empty key in config/sensenova_apikeys.
-# Gender, emotion, and BGM are pinned to SenseNova Flash Lite with no fallback.
+# 所有 LLM 阶段（gender/emotion/performance/bgm）统一走本地 SenseNova Pool 代理
+# （20 账号轮询），模型 deepseek-v4-flash。endpoint 与 apiKey 见
+# backend/app/core/llm_client.py（apiKey 实际存于 config/llm_proxy_key，勿提交）。
 llm:
-  provider: "sensenova"
-  model: "sensenova-6.7-flash-lite"
+  provider: "sensenova-pool"
+  model: "deepseek-v4-flash"
   rate_limit_cooldown_seconds: 15
 
 # 音色克隆引擎：voxcpm
