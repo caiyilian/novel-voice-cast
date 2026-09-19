@@ -167,3 +167,31 @@ def test_emotion_checkpoint_usage_excludes_shared_client_history(tmp_path):
 
     payload = json.loads(checkpoint.read_text(encoding="utf-8"))
     assert payload["llm_usage"]["calls"] == 2
+
+
+def test_label_all_injects_recent_emotion_memory():
+    dialogues = [
+        {"line": 1, "speaker": "A", "text": "First line"},
+        {"line": 2, "speaker": "B", "text": "Second line"},
+    ]
+    text = "First line\nSecond line"
+
+    def resp(line, emotion, tone, review=False):
+        name = "submit_emotion_review" if review else "submit_emotion"
+        return LLMResult(tool_calls=[ToolCall(name, name, {
+            "emotion": emotion, "tone": tone, "confidence": 0.9,
+            "evidence": f"line {line} cue", "evidence_lines": [line],
+        })])
+
+    client = ScriptedClient([
+        resp(1, "calm", "serious"),
+        resp(1, "calm", "serious", review=True),
+        resp(2, "happy", "gentle"),
+        resp(2, "happy", "gentle", review=True),
+    ])
+
+    label_all_emotions(dialogues, text, client=client, checkpoint_path=None)
+
+    second_primary = client.messages[2][1]["content"]
+    assert "Recent emotional context of earlier lines" in second_primary
+    assert "A: calm/serious" in second_primary
