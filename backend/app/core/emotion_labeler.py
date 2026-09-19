@@ -511,7 +511,7 @@ def label_all_emotions(
                         except (TypeError, ValueError, IndexError):
                             continue
                         speaker = str(dialogue.get("speaker", "")).strip()
-                        if not speaker or speaker in {"旁白", "narrator", "Narrator"}:
+                        if not speaker:
                             continue
                         validated, _ = _validate(
                             value,
@@ -546,7 +546,7 @@ def label_all_emotions(
     for dialogue_index, dialogue in enumerate(dialogues):
         key = str(dialogue_index)
         speaker = str(dialogue.get("speaker", "")).strip()
-        if not speaker or speaker in {"\u65c1\u767d", "narrator", "Narrator"}:
+        if not speaker:
             continue
         if key in results:
             continue

@@ -1186,7 +1186,7 @@ def emotion_cache_valid(
         expected = {
             str(index)
             for index, dialogue in enumerate(dialogues)
-            if dialogue.get("speaker") and dialogue.get("speaker") not in {"旁白", "narrator", "Narrator"}
+            if dialogue.get("speaker")
         }
         if set(results) != expected:
             return False
@@ -1875,7 +1875,7 @@ def tts_source_hash(
         if gender not in {"male", "female"}:
             gender = "male"
         assignment = get_voice_assignment(speaker, gender, config)
-        emotion = emotion_results.get(str(index), {}) if raw_speaker and speaker != NARRATOR_SPEAKER else {}
+        emotion = emotion_results.get(str(index), {})
         performance = performance_results.get(str(index), {})
         fingerprints.append(tts_fingerprint(dialogue, assignment, emotion, performance, config))
     payload = json.dumps(
@@ -4361,7 +4361,6 @@ def main(argv: list[str] | None = None) -> int:
                     1
                     for dialogue in dialogues
                     if dialogue.get("speaker")
-                    and dialogue.get("speaker") not in {"旁白", "narrator", "Narrator"}
                 )
                 emotion_results = execute_stage(
                     recorder,
