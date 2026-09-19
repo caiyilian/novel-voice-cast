@@ -73,7 +73,7 @@ def test_emotion_disagreement_uses_third_agent():
     assert "Index 0" not in client.messages[1][1]["content"]
 
 
-def test_emotion_checkpoint_skips_completed_and_narration(tmp_path):
+def test_emotion_checkpoint_skips_completed_only(tmp_path):
     checkpoint = tmp_path / "emotion.json"
     dialogues = [
         {"line": 1, "speaker": "\u65c1\u767d", "text": "Narration"},
@@ -94,12 +94,25 @@ def test_emotion_checkpoint_skips_completed_and_narration(tmp_path):
         "evidence": "line 2",
         "evidence_lines": [2],
     }}, "errors": {}}), encoding="utf-8")
-    client = ScriptedClient([])
+
+    def resp(line, emotion, tone, review=False):
+        name = "submit_emotion_review" if review else "submit_emotion"
+        return LLMResult(tool_calls=[ToolCall(name, name, {
+            "emotion": emotion, "tone": tone, "confidence": 0.9,
+            "evidence": f"line {line}", "evidence_lines": [line],
+        })])
+
+    client = ScriptedClient([
+        resp(1, "calm", "serious"),
+        resp(1, "calm", "serious", review=True),
+    ])
 
     results = label_all_emotions(dialogues, text, client=client, checkpoint_path=checkpoint)
 
-    assert list(results) == ["1"]
-    assert client.calls == 0
+    # 旁白（index 0）现在也纳入标注，speaker A（index 1）从 checkpoint 恢复
+    assert list(results) == ["1", "0"]
+    assert results["0"]["emotion"] == "calm"
+    assert client.calls == 2
 
 
 def test_old_checkpoint_is_not_reused(tmp_path):
