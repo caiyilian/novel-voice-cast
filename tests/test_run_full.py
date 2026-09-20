@@ -612,7 +612,7 @@ def test_blank_speaker_is_narrator_only_in_supplemental_performance_and_tts(tmp_
         "reference_audio": str(narrator_reference.resolve()),
     }
 
-    task = run_full.make_tts_task(config, 1, dialogues[1], "male", {}, {})
+    task = run_full.make_tts_task(config, 1, dialogues[1], "male", {})
     assert task["entry"]["speaker"] == run_full.NARRATOR_SPEAKER
     assert task["reference_audio"] == str(narrator_reference.resolve())
     assert run_full.segments_for_dialogues(config, dialogues)[1]["speaker"] == run_full.NARRATOR_SPEAKER
@@ -875,7 +875,6 @@ def test_performance_style_enters_voxcpm_fingerprint_and_task(tmp_path, monkeypa
     reference_path.write_bytes(b"reference")
     dialogue = {"speaker": "Main", "text": "hold the line", "chapter": "one"}
     genders = {"Main": {"gender": "male"}}
-    emotion = {"0": {"emotion": "calm", "tone": "soft"}}
     captured_tasks = []
 
     def fake_voxcpm(tasks, _config):
@@ -887,18 +886,18 @@ def test_performance_style_enters_voxcpm_fingerprint_and_task(tmp_path, monkeypa
     monkeypatch.setattr(run_full, "run_voxcpm_tasks", fake_voxcpm)
 
     first_performance = {"0": {"performance_control": "克制、轻声，语速舒缓"}}
-    run_full.step_tts(config, [dialogue], genders, emotion, first_performance)
+    run_full.step_tts(config, [dialogue], genders, first_performance)
 
     assignment = run_full.get_voice_assignment("Main", "male", config)
     first_task = captured_tasks[0]
     first_parent = run_full.make_tts_task(
-        config, 0, dialogue, "male", emotion["0"], first_performance["0"]
+        config, 0, dialogue, "male", first_performance["0"]
     )
     assert first_task["style_control"] == "克制，轻声，语速舒缓"
     assert first_task["fingerprint"] == first_parent["chunks"][0]["fingerprint"]
 
     second_performance = {"0": {"performance_control": "严肃，吐字清晰，语速稍快"}}
-    run_full.step_tts(config, [dialogue], genders, emotion, second_performance)
+    run_full.step_tts(config, [dialogue], genders, second_performance)
 
     assert len(captured_tasks) == 2
     assert captured_tasks[1]["style_control"] == "严肃，语速稍快"
@@ -906,9 +905,9 @@ def test_performance_style_enters_voxcpm_fingerprint_and_task(tmp_path, monkeypa
 
     edge_assignment = {"engine": "edge-tts", "voice_id": "female-test"}
     assert run_full.tts_fingerprint(
-        dialogue, edge_assignment, emotion["0"], first_performance["0"], config
+        dialogue, edge_assignment, first_performance["0"], config
     ) == run_full.tts_fingerprint(
-        dialogue, edge_assignment, emotion["0"], second_performance["0"], config
+        dialogue, edge_assignment, second_performance["0"], config
     )
 
 
@@ -1009,13 +1008,11 @@ def test_main_can_resume_directly_from_tts(tmp_path, monkeypatch):
     monkeypatch.setattr(run_full, "load_config", lambda _path: config)
     monkeypatch.setattr(run_full, "step_parse", lambda _config: (dialogues, characters, "novel"))
     monkeypatch.setattr(run_full, "require_gender_results", lambda *_args: {"Main": {"gender": "male"}})
-    monkeypatch.setattr(run_full, "require_emotion_results", lambda *_args: {"0": {"emotion": "calm"}})
 
-    def fake_tts(_config, parsed_dialogues, genders, emotions, _performances):
+    def fake_tts(_config, parsed_dialogues, genders, _performances):
         captured.update(
             dialogues=parsed_dialogues,
             genders=genders,
-            emotions=emotions,
         )
         return []
 
@@ -1034,13 +1031,12 @@ def test_main_can_resume_directly_from_tts(tmp_path, monkeypatch):
     assert captured == {
         "dialogues": dialogues,
         "genders": {"Main": {"gender": "male"}},
-        "emotions": {"0": {"emotion": "calm"}},
     }
 
 
 def test_main_from_tts_requires_and_passes_enabled_performance_cache(tmp_path, monkeypatch):
     config = make_config(tmp_path)
-    config["features"] = {"emotion_label": True, "performance_direction": True}
+    config["features"] = {"performance_direction": True}
     dialogues = [{"speaker": "Main", "text": "line", "chapter": "one"}]
     characters = ["Main"]
     performances = {"0": {"performance_control": "low and deliberate"}}
@@ -1053,21 +1049,16 @@ def test_main_from_tts_requires_and_passes_enabled_performance_cache(tmp_path, m
         events.append("gender")
         return {"Main": {"gender": "male"}}
 
-    def fake_emotion(*_args):
-        events.append("emotion")
-        return {"0": {"emotion": "calm"}}
-
     def fake_performance(*_args):
         events.append("performance")
         return performances
 
-    def fake_tts(_config, _dialogues, _genders, _emotions, performance_results):
+    def fake_tts(_config, _dialogues, _genders, performance_results):
         events.append("tts")
         assert performance_results is performances
         return []
 
     monkeypatch.setattr(run_full, "require_gender_results", fake_gender)
-    monkeypatch.setattr(run_full, "require_emotion_results", fake_emotion)
     monkeypatch.setattr(run_full, "require_performance_results", fake_performance)
     monkeypatch.setattr(run_full, "step_tts", fake_tts)
 
@@ -1081,7 +1072,7 @@ def test_main_from_tts_requires_and_passes_enabled_performance_cache(tmp_path, m
     )
 
     assert result == 0
-    assert events == ["gender", "emotion", "performance", "tts"]
+    assert events == ["gender", "performance", "tts"]
 
 
 def test_step_tts_stops_on_edge_failure_and_keeps_checkpoint(tmp_path, monkeypatch):
@@ -1118,8 +1109,7 @@ def test_execute_stage_records_failure(tmp_path):
 
 
 def test_stage_slice_rejects_reverse_range():
-    assert run_full.stage_slice("emotion", "tts") == (
-        "emotion",
+    assert run_full.stage_slice("performance", "tts") == (
         "performance",
         "tts",
     )
