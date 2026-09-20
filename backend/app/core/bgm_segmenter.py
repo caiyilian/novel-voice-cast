@@ -8,7 +8,9 @@ import logging
 import math
 import os
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1049,8 +1051,14 @@ def label_bgm_types(
     checkpoint_path: Path | str | None = DEFAULT_TYPE_CHECKPOINT,
     resume: bool = True,
     max_retries: int = 4,
+    max_workers: int = 8,
 ) -> list[dict[str, Any]]:
-    """Classify one segment per API decision, with source excerpts and checkpoints."""
+    """Classify one segment per API decision, with source excerpts and checkpoints.
+
+    Segments are classified concurrently; ``previous_bgm_type`` is a soft
+    hint (the most recently completed type) rather than an exact in-order
+    dependency, mirroring the emotion labeler's recent-memory design.
+    """
     client = client or LLMClient.for_flash_lite("bgm_classification")
     model_name = _flash_lite_model(client)
     usage_at_start = _normalise_usage_summary(client.usage_summary())
@@ -1097,105 +1105,111 @@ def label_bgm_types(
 
     output = [dict(segment) for segment in segments]
     previous_type = "none"
-    for zero_index, segment in enumerate(output):
+    previous_lock = threading.Lock()
+    checkpoint_lock = threading.Lock()
+
+    def _process_one(zero_index: int, segment: dict[str, Any]) -> dict[str, Any]:
+        """Classify one segment and return its decision."""
         one_index = zero_index + 1
-        key = str(one_index)
-        if key in completed:
-            decision = completed[key]
+        start, end = int(segment["start_line"]), int(segment["end_line"])
+        excerpt = _scene_excerpt(lines, start, end) if lines else "Source text was not supplied; rely on validated segment metadata."
+        with previous_lock:
+            local_previous = previous_type
+        neighbors = {
+            "previous": output[zero_index - 1] if zero_index else None,
+            "current": segment,
+            "next": output[zero_index + 1] if zero_index + 1 < len(output) else None,
+            "previous_bgm_type": local_previous,
+        }
+        messages = [
+            {"role": "system", "content": BGM_TYPE_PROMPT},
+            {"role": "user", "content": f"Segment index: {one_index}\nMetadata: {json.dumps(neighbors, ensure_ascii=False)}\n\nSource excerpt:\n{excerpt}"},
+        ]
+        calls_before = _normalise_usage_summary(client.usage_summary())["calls"]
+        primary = _request_bgm_decision(client, messages, one_index, max_retries, "bgm_type_primary")
+        review: Optional[dict[str, Any]] = None
+        review_error = ""
+        try:
+            review = _request_bgm_decision(
+                client,
+                [
+                    {"role": "system", "content": BGM_TYPE_PROMPT + "\nAct as an independent second classifier. Challenge keyword matching and continuity bias."},
+                    {"role": "user", "content": f"Segment index: {one_index}\nFirst classifier: {json.dumps(primary, ensure_ascii=False)}\nMetadata: {json.dumps(neighbors, ensure_ascii=False)}\n\nSource excerpt:\n{excerpt}"},
+                ],
+                one_index,
+                max_retries,
+                "bgm_type_reviewer",
+            )
+        except SegmentationError as exc:
+            review_error = str(exc)
+            logger.warning(
+                "BGM type reviewer failed for segment %d; retaining the validated primary decision: %s",
+                one_index,
+                review_error,
+            )
+        if review is None:
+            decision = dict(primary)
+            decision["review_fallback"] = True
+            decision["review_error"] = review_error
+        elif review["bgm_type"] == primary["bgm_type"]:
+            decision = dict(
+                max((primary, review), key=lambda item: float(item["confidence"]))
+            )
+            decision["confidence"] = round(
+                (primary["confidence"] + review["confidence"]) / 2, 4
+            )
+            decision["evidence"] = (
+                f"Primary: {primary['evidence']} | Review: {review['evidence']}"
+            )
         else:
-            start, end = int(segment["start_line"]), int(segment["end_line"])
-            excerpt = _scene_excerpt(lines, start, end) if lines else "Source text was not supplied; rely on validated segment metadata."
-            neighbors = {
-                "previous": output[zero_index - 1] if zero_index else None,
-                "current": segment,
-                "next": output[zero_index + 1] if zero_index + 1 < len(output) else None,
-                "previous_bgm_type": previous_type,
-            }
-            messages = [
-                {"role": "system", "content": BGM_TYPE_PROMPT},
-                {"role": "user", "content": f"Segment index: {one_index}\nMetadata: {json.dumps(neighbors, ensure_ascii=False)}\n\nSource excerpt:\n{excerpt}"},
-            ]
-            calls_before = _normalise_usage_summary(client.usage_summary())["calls"]
-            primary = _request_bgm_decision(client, messages, one_index, max_retries, "bgm_type_primary")
-            review: Optional[dict[str, Any]] = None
-            review_error = ""
             try:
-                review = _request_bgm_decision(
+                decision = _request_bgm_decision(
                     client,
                     [
-                        {"role": "system", "content": BGM_TYPE_PROMPT + "\nAct as an independent second classifier. Challenge keyword matching and continuity bias."},
-                        {"role": "user", "content": f"Segment index: {one_index}\nFirst classifier: {json.dumps(primary, ensure_ascii=False)}\nMetadata: {json.dumps(neighbors, ensure_ascii=False)}\n\nSource excerpt:\n{excerpt}"},
+                        {
+                            "role": "system",
+                            "content": BGM_TYPE_PROMPT
+                            + "\nAct as the final scoring director. Resolve both drafts and "
+                            "deliver the most source-specific production brief.",
+                        },
+                        {
+                            "role": "user",
+                            "content": f"Segment index: {one_index}\nDrafts: "
+                            f"{json.dumps({'primary': primary, 'review': review}, ensure_ascii=False)}"
+                            f"\nMetadata: {json.dumps(neighbors, ensure_ascii=False)}"
+                            f"\n\nSource excerpt:\n{excerpt}",
+                        },
                     ],
                     one_index,
                     max_retries,
-                    "bgm_type_reviewer",
+                    "bgm_type_adjudicator",
                 )
+                decision["adjudicated"] = True
             except SegmentationError as exc:
-                review_error = str(exc)
+                decision = dict(max(
+                    (primary, review), key=lambda item: float(item["confidence"])
+                ))
+                decision["adjudication_fallback"] = True
+                decision["adjudication_error"] = str(exc)
                 logger.warning(
-                    "BGM type reviewer failed for segment %d; retaining the validated primary decision: %s",
+                    "BGM type adjudicator failed for segment %d; retaining the higher-confidence "
+                    "validated classifier decision: %s",
                     one_index,
-                    review_error,
+                    exc,
                 )
-            if review is None:
-                decision = dict(primary)
-                decision["review_fallback"] = True
-                decision["review_error"] = review_error
-            elif review["bgm_type"] == primary["bgm_type"]:
-                decision = dict(
-                    max((primary, review), key=lambda item: float(item["confidence"]))
-                )
-                decision["confidence"] = round(
-                    (primary["confidence"] + review["confidence"]) / 2, 4
-                )
-                decision["evidence"] = (
-                    f"Primary: {primary['evidence']} | Review: {review['evidence']}"
-                )
-            else:
-                try:
-                    decision = _request_bgm_decision(
-                        client,
-                        [
-                            {
-                                "role": "system",
-                                "content": BGM_TYPE_PROMPT
-                                + "\nAct as the final scoring director. Resolve both drafts and "
-                                "deliver the most source-specific production brief.",
-                            },
-                            {
-                                "role": "user",
-                                "content": f"Segment index: {one_index}\nDrafts: "
-                                f"{json.dumps({'primary': primary, 'review': review}, ensure_ascii=False)}"
-                                f"\nMetadata: {json.dumps(neighbors, ensure_ascii=False)}"
-                                f"\n\nSource excerpt:\n{excerpt}",
-                            },
-                        ],
-                        one_index,
-                        max_retries,
-                        "bgm_type_adjudicator",
-                    )
-                    decision["adjudicated"] = True
-                except SegmentationError as exc:
-                    decision = dict(max(
-                        (primary, review), key=lambda item: float(item["confidence"])
-                    ))
-                    decision["adjudication_fallback"] = True
-                    decision["adjudication_error"] = str(exc)
-                    logger.warning(
-                        "BGM type adjudicator failed for segment %d; retaining the higher-confidence "
-                        "validated classifier decision: %s",
-                        one_index,
-                        exc,
-                    )
-            decision["review"] = review
-            decision["primary_decision"] = primary
-            decision["review_decision"] = review
-            decision["agent_calls"] = max(
-                0, _normalise_usage_summary(client.usage_summary())["calls"] - calls_before
-            )
-            completed[key] = decision
-            write_checkpoint()
-        segment.update({
+        decision["review"] = review
+        decision["primary_decision"] = primary
+        decision["review_decision"] = review
+        decision["agent_calls"] = max(
+            0, _normalise_usage_summary(client.usage_summary())["calls"] - calls_before
+        )
+        return decision
+
+    def _apply(zero_index: int, decision: dict[str, Any]) -> None:
+        nonlocal previous_type
+        key = str(zero_index + 1)
+        completed[key] = decision
+        output[zero_index].update({
             "bgm_type": decision["bgm_type"],
             "bgm_type_zh": BGM_TYPE_MAP_ZH[decision["bgm_type"]],
             "bgm_confidence": decision["confidence"],
@@ -1213,8 +1227,30 @@ def label_bgm_types(
             "bgm_source_hash": source_hash,
             "bgm_model": model_name,
         })
-        previous_type = decision["bgm_type"]
-        logger.info("BGM type progress %d/%d: %s", one_index, len(output), previous_type)
+        with previous_lock:
+            previous_type = decision["bgm_type"]
+        with checkpoint_lock:
+            write_checkpoint()
+        logger.info("BGM type progress %d/%d: %s", zero_index + 1, len(output), decision["bgm_type"])
+
+    pending = [(zero_index, segment) for zero_index, segment in enumerate(output) if str(zero_index + 1) not in completed]
+    if pending:
+        if max_workers <= 1 or len(pending) == 1:
+            for zero_index, segment in pending:
+                _apply(zero_index, _process_one(zero_index, segment))
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_process_one, zero_index, segment): zero_index for zero_index, segment in pending}
+                for future in as_completed(futures):
+                    zero_index = futures[future]
+                    _apply(zero_index, future.result())
+
+    # 写回恢复的 completed 结果（非 pending）
+    for zero_index, segment in enumerate(output):
+        key = str(zero_index + 1)
+        if key in completed and "bgm_type" not in segment:
+            decision = completed[key]
+            _apply(zero_index, decision)
     write_checkpoint()
     return output
 
