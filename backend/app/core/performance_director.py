@@ -17,8 +17,10 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
@@ -2156,8 +2158,15 @@ def direct_all_performances(
     max_agent_rounds: int = 8,
     item_retries: int = 3,
     max_items: Optional[int] = None,
+    max_workers: int = 8,
 ) -> dict[str, dict[str, Any]]:
-    """Direct every selected VoxCPM line in order with resumable continuity."""
+    """Direct every selected VoxCPM line in order with resumable continuity.
+
+    Directions are grouped by speaker: a speaker's lines are directed serially
+    (preserving that character's performance arc), while different speakers are
+    directed concurrently.  The cross-speaker "recent global" continuity is
+    therefore advisory only, but same-speaker continuity stays exact.
+    """
     target_indices = [int(index) for index in target_indices]
     if target_indices != sorted(dict.fromkeys(target_indices)):
         raise ValueError("target_indices must be unique and sorted in dialogue order")
@@ -2187,7 +2196,7 @@ def direct_all_performances(
     completed: dict[int, dict[str, Any]] = {}
     expanded_reusable: dict[int, dict[str, Any]] = {}
     errors: dict[str, str] = {}
-    inflight: dict[str, Any] = {}
+    resumed_inflight: dict[str, Any] = {}
     if resume and checkpoint and checkpoint.exists():
         payload = _read_checkpoint(checkpoint)
         compatible = _checkpoint_compatible(
@@ -2310,7 +2319,7 @@ def direct_all_performances(
                     and raw_inflight.get("continuity_input_hash") == _continuity_hash(completed, speaker)
                     and isinstance(raw_inflight.get("stages"), dict)
                 ):
-                    inflight = raw_inflight
+                    resumed_inflight = raw_inflight
             if expanded_checkpoint:
                 logger.info(
                     "Expanding compatible performance direction checkpoint from %s to %s targets; "
@@ -2324,10 +2333,10 @@ def direct_all_performances(
 
     if max_items is not None and max_items <= 0:
         return {str(dialogue_index): completed[dialogue_index] for dialogue_index in sorted(completed)}
-    newly_processed = 0
-    for dialogue_index in target_indices:
-        if dialogue_index in completed:
-            continue
+    checkpoint_lock = threading.Lock()
+
+    def _direct_one(dialogue_index: int) -> None:
+        """Direct a single line, updating ``completed``/``errors`` and the checkpoint."""
         dialogue = index.dialogues[dialogue_index]
         speaker = str(dialogue.get("speaker", "")).strip()
         if dialogue_index in expanded_reusable:
@@ -2355,13 +2364,15 @@ def direct_all_performances(
                 )
             else:
                 completed[dialogue_index] = rebased
-                continue
+                return
         continuity_input_hash = _continuity_hash(completed, speaker)
         if (
-            inflight.get("dialogue_index") != dialogue_index
-            or inflight.get("continuity_input_hash") != continuity_input_hash
+            resumed_inflight.get("dialogue_index") == dialogue_index
+            and resumed_inflight.get("continuity_input_hash") == continuity_input_hash
         ):
-            inflight = {
+            local_inflight: dict[str, Any] = resumed_inflight
+        else:
+            local_inflight: dict[str, Any] = {
                 "dialogue_index": dialogue_index,
                 "continuity_input_hash": continuity_input_hash,
                 "stages": {},
@@ -2371,19 +2382,20 @@ def direct_all_performances(
             stage: str,
             record: dict[str, Any],
             *,
-            current: dict[str, Any] = inflight,
+            current: dict[str, Any] = local_inflight,
         ) -> None:
             current.setdefault("stages", {})[stage] = record
-            _write_direction_checkpoint(
-                checkpoint,
-                target_indices,
-                completed,
-                errors,
-                source_hash,
-                model_name,
-                _add_usage(resumed_usage, _usage_delta(client, usage_at_start)),
-                current,
-            )
+            with checkpoint_lock:
+                _write_direction_checkpoint(
+                    checkpoint,
+                    target_indices,
+                    completed,
+                    errors,
+                    source_hash,
+                    model_name,
+                    _add_usage(resumed_usage, _usage_delta(client, usage_at_start)),
+                    current,
+                )
 
         last_error: Optional[Exception] = None
         calls_before = _usage_snapshot(client)["calls"]
@@ -2402,13 +2414,12 @@ def direct_all_performances(
                     max_control_chars=max_control_chars,
                     max_agent_rounds=max_agent_rounds,
                     _index=index,
-                    _resume_stages=inflight.get("stages", {}),
+                    _resume_stages=local_inflight.get("stages", {}),
                     _stage_callback=save_direction_stage,
                 )
                 value["item_attempts"] = attempt
                 value["attempt_agent_calls"] = _usage_snapshot(client)["calls"] - calls_before
                 completed[dialogue_index] = value
-                inflight = {}
                 errors.pop(str(dialogue_index), None)
                 break
             except Exception as exc:
@@ -2422,16 +2433,18 @@ def direct_all_performances(
                 )
         if dialogue_index not in completed:
             errors[str(dialogue_index)] = str(last_error)
-        _write_direction_checkpoint(
-            checkpoint,
-            target_indices,
-            completed,
-            errors,
-            source_hash,
-            model_name,
-            _add_usage(resumed_usage, _usage_delta(client, usage_at_start)),
-            inflight,
-        )
+        final_inflight: dict[str, Any] = {} if dialogue_index in completed else local_inflight
+        with checkpoint_lock:
+            _write_direction_checkpoint(
+                checkpoint,
+                target_indices,
+                completed,
+                errors,
+                source_hash,
+                model_name,
+                _add_usage(resumed_usage, _usage_delta(client, usage_at_start)),
+                final_inflight,
+            )
         if dialogue_index not in completed:
             raise PerformanceBatchError(
                 f"performance direction {dialogue_index} failed after {item_retries} attempts; "
@@ -2444,9 +2457,30 @@ def direct_all_performances(
             completed[dialogue_index]["agent_calls"],
             completed[dialogue_index]["performance_control"],
         )
-        newly_processed += 1
-        if max_items is not None and newly_processed >= max_items:
-            break
+
+    pending = [dialogue_index for dialogue_index in target_indices if dialogue_index not in completed]
+    if max_items is not None and max_items > 0:
+        pending = pending[:max_items]
+    groups: dict[str, list[int]] = {}
+    for dialogue_index in pending:
+        speaker = str(index.dialogues[dialogue_index].get("speaker", "")).strip()
+        groups.setdefault(speaker, []).append(dialogue_index)
+
+    def _direct_group(group: list[int]) -> None:
+        for dialogue_index in group:
+            _direct_one(dialogue_index)
+
+    if groups:
+        if max_workers <= 1 or len(groups) == 1:
+            # 串行：保持 target_indices 顺序，continuity 语义与旧版完全一致。
+            for dialogue_index in pending:
+                _direct_one(dialogue_index)
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = [pool.submit(_direct_group, group) for group in groups.values()]
+                for future in as_completed(futures):
+                    future.result()
+
     return {str(dialogue_index): completed[dialogue_index] for dialogue_index in sorted(completed)}
 
 
