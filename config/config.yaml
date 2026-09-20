@@ -80,6 +80,15 @@ voxcpm:
   inter_chunk_pause_ms: 90
   timeout: 604800               # 最长允许连续运行 7 天
 
+# CosyVoice 3 零样本音色克隆 + instruct 自然语言控制（可替代 VoxCPM）。
+# 关键：performance_control 不压缩直接作为 instruct_text，保留完整表演信息。
+cosyvoice:
+  enabled: false               # true 时克隆角色改用 CosyVoice 3（否则用 VoxCPM）
+  model_path: "backend/models/CosyVoice3-0.5B"
+  python: "E:/projects/cosyvoice/.venv/python.exe"
+  task_attempts: 3
+  timeout: 604800
+
 # VoxCPM 表演导演：emotion 之后、TTS 之前
 # 每条 VoxCPM 台词均由两个互相盲审的导演独立分析，再由第三个 Agent 裁决。
 streaming_tts:
