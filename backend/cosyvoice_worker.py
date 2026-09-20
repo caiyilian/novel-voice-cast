@@ -85,7 +85,7 @@ def main(argv: list[str]) -> int:
     from cosyvoice.cli.cosyvoice import AutoModel
     import torchaudio
 
-    model = AutoModel(model_dir=model_path)
+    model = AutoModel(model_dir=model_path, fp16=bool(spec.get("fp16", False)))
     sample_rate = int(model.sample_rate)
 
     results: dict = {}

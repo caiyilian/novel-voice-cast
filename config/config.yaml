@@ -88,6 +88,8 @@ cosyvoice:
   model_path: "E:/projects/cosyvoice/pretrained_models/Fun-CosyVoice3-0.5B"     # 模型目录
   python: "E:/projects/cosyvoice/.venv/python.exe"
   task_attempts: 3
+  workers: 3                   # 本地多进程并发数（12GB 显存 fp16 每进程约 3.5GB，可开 3 个）
+  fp16: true                   # 半精度省显存，允许更多并发进程
   timeout: 604800
 
 # VoxCPM 表演导演：emotion 之后、TTS 之前
