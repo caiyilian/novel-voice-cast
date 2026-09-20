@@ -2,423 +2,584 @@
   "罗伦斯": {
     "character_name": "罗伦斯",
     "gender": "male",
-    "confidence": 1.0,
-    "evidence": "Primary: Line 25: addressed as \"罗伦斯先生\" (Mr. Lawrence) using male honorific. Lines 146, 153, 156, 165, 169, 170, 189: consistently referred to with male pronoun \"他\" (he/him). Line 45: self-identifies as \"旅行商人罗伦斯\" (traveling merchant Lawrence). Narrative consistently portrays Lawrence as male traveling merchant. | Review: Line 25: addressed as \"罗伦斯先生\" (Mr. Lawrence) using male honorific. Lines 146, 153, 156, 165, 169, 170, 189: consistently referred to with male pronoun \"他\" (he/him). Line 45: self-identifies as \"旅行商人罗伦斯\" (traveling merchant Lawrence). Narrative consistently portrays Lawrence as male traveling merchant.",
+    "confidence": 0.98,
+    "evidence": "Primary: Explicit masculine pronoun \"他\" is used throughout the narration for 罗伦斯 (e.g., line 134: \"他在十二岁时开始跟随旅行商人亲戚学习，到了十八岁便自立门户\"; line 137: \"他抬头仰望天空\"). He is addressed with the masculine honorific \"罗伦斯先生\" (line 25). He is described as liking a woman (line 140: \"喜欢上的女子\") and bought a stallion rather than a mare (line 146). All narration consistently treats him as male. | Review: Explicit masculine pronoun \"他\" is used for 罗伦斯 throughout the narration: line 134 \"他在十二岁时开始跟随旅行商人亲戚学习，到了十八岁便自立门户\"; line 123 \"罗伦斯是跑遍各地的旅行商人，他压根儿就不相信教会的教诲\"; line 146 \"但他当然不予理会，买了强壮有力的公马\". He is addressed with the masculine honorific \"罗伦斯先生\" (line 25). He is described as having liked a woman during travels (line 140 \"还有因大雪困住而久留旅馆时喜欢上的女子等等\") and as someone who has \"只光顾过城里妓院\" (line 167), consistent with male. No counter-evidence appears in the packet. (Minor note: candidate cited line 137 as \"他抬头仰望天空,\" but that line reads \"罗伦斯抬头仰望天空\" — a citation slip that does not affect the conclusion.)",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "罗伦斯",
+        "gender": "male",
+        "confidence": 0.98,
+        "evidence": "Explicit masculine pronoun \"他\" is used throughout the narration for 罗伦斯 (e.g., line 134: \"他在十二岁时开始跟随旅行商人亲戚学习，到了十八岁便自立门户\"; line 137: \"他抬头仰望天空\"). He is addressed with the masculine honorific \"罗伦斯先生\" (line 25). He is described as liking a woman (line 140: \"喜欢上的女子\") and bought a stallion rather than a mare (line 146). All narration consistently treats him as male."
+      },
       "review": {
         "character_name": "罗伦斯",
         "gender": "male",
-        "confidence": 1.0,
-        "evidence": "Line 25: addressed as \"罗伦斯先生\" (Mr. Lawrence) using male honorific. Lines 146, 153, 156, 165, 169, 170, 189: consistently referred to with male pronoun \"他\" (he/him). Line 45: self-identifies as \"旅行商人罗伦斯\" (traveling merchant Lawrence). Narrative consistently portrays Lawrence as male traveling merchant.",
-        "reasoning_summary": "The evidence is clear and consistent. The character is explicitly addressed with the male honorific \"先生\" (Mr.) in line 25, and throughout the text is consistently referred to with male pronouns \"他\" (he/him) in multiple instances. The character also self-identifies as a traveling merchant. There are no contradictions in the textual evidence, and the gender identification is unambiguous based on explicit linguistic markers rather than name-based inference."
+        "confidence": 0.98,
+        "evidence": "Explicit masculine pronoun \"他\" is used for 罗伦斯 throughout the narration: line 134 \"他在十二岁时开始跟随旅行商人亲戚学习，到了十八岁便自立门户\"; line 123 \"罗伦斯是跑遍各地的旅行商人，他压根儿就不相信教会的教诲\"; line 146 \"但他当然不予理会，买了强壮有力的公马\". He is addressed with the masculine honorific \"罗伦斯先生\" (line 25). He is described as having liked a woman during travels (line 140 \"还有因大雪困住而久留旅馆时喜欢上的女子等等\") and as someone who has \"只光顾过城里妓院\" (line 167), consistent with male. No counter-evidence appears in the packet. (Minor note: candidate cited line 137 as \"他抬头仰望天空,\" but that line reads \"罗伦斯抬头仰望天空\" — a citation slip that does not affect the conclusion.)",
+        "reasoning_summary": "The narration consistently uses the explicitly masculine third-person pronoun 他 for 罗伦斯, and he is called 罗伦斯先生 (Mr.). His attraction to a woman and other contextual details corroborate male gender. The independent evidence fully supports the candidate's male determination."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 3,
+    "item_attempts": 1
   },
   "赫萝": {
     "character_name": "赫萝",
     "gender": "female",
     "confidence": 1.0,
-    "evidence": "Primary: Multiple explicit references to 赫萝 as \"女孩\" (girl) at lines 220, 223, and 229. Female pronoun \"她\" (she/her) used at lines 281 and 295. Self-identification as female through dialogue at lines 222 and 271. | Review: Multiple explicit references to 赫萝 as \"女孩\" (girl) at lines 220, 223, and 229. Female pronoun \"她\" (she/her) used at lines 281 and 295. Self-identification as female through dialogue at lines 222 and 271.",
+    "evidence": "Primary: Explicit narration identifies 赫萝 as female throughout. Line 162: 「捷足先登的女孩依旧在眼前」; line 163: 「有着美丽脸孔的女孩…让人有些不忍心叫醒她」 (female pronoun 她); line 167: 「她的声音…甜美声音」; line 181: 「赤裸女孩美丽得让人发不出声音来」; line 221: 「拿短剑指着女孩不该是男子汉所为」 (explicitly contrasts 女孩 with the male narrator); line 406: 「赫萝的神情…像是…被囚禁的公主一样」. Multiple references at lines 209, 229, 244, 272 consistently use 女孩/她 for 赫萝. No conflicting evidence. | Review: The source packet contains explicit and consistent female references for 赫萝. 女孩 (girl) is used repeatedly: line 220 「女孩说完后」, line 223 「女孩一边说」, line 229 「这女孩好大胆」, line 240 「女孩的回答让罗伦斯感到意外」, line 246 「女孩反问罗伦斯」, line 272 「这女孩似乎会让罗伦斯乱了阵脚」, line 301 「如果女孩真是如假包换的赫萝」, line 353 「从女孩纤细的肩膀长出来」, line 408 「如此厌恶回到村里的女孩」. The female pronoun 她 (she/her) is also used: line 244 「她的模样实在不像在说谎」, line 272 「同意她的说法」, line 274 「她转身露出背部」, line 281 「她窝在貂皮底下」, line 295 「她露出厌恶的表情」. Additionally, line 406 compares 赫萝 to 「被囚禁的公主」 (an imprisoned princess). No male references or contradictory evidence appear in the packet.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "赫萝",
+        "gender": "female",
+        "confidence": 1.0,
+        "evidence": "Explicit narration identifies 赫萝 as female throughout. Line 162: 「捷足先登的女孩依旧在眼前」; line 163: 「有着美丽脸孔的女孩…让人有些不忍心叫醒她」 (female pronoun 她); line 167: 「她的声音…甜美声音」; line 181: 「赤裸女孩美丽得让人发不出声音来」; line 221: 「拿短剑指着女孩不该是男子汉所为」 (explicitly contrasts 女孩 with the male narrator); line 406: 「赫萝的神情…像是…被囚禁的公主一样」. Multiple references at lines 209, 229, 244, 272 consistently use 女孩/她 for 赫萝. No conflicting evidence."
+      },
       "review": {
         "character_name": "赫萝",
         "gender": "female",
         "confidence": 1.0,
-        "evidence": "Multiple explicit references to 赫萝 as \"女孩\" (girl) at lines 220, 223, and 229. Female pronoun \"她\" (she/her) used at lines 281 and 295. Self-identification as female through dialogue at lines 222 and 271.",
-        "reasoning_summary": "The evidence is conclusive and consistent. The text explicitly refers to 赫萝 as \"女孩\" (girl) multiple times (lines 220, 223, 229), uses the female pronoun \"她\" (she/her) when referring to 赫萝 (lines 281, 295), and the character self-identifies as female through dialogue (lines 222, 271). There are no contradictions in the evidence. The confidence level of 1.0 is justified given the explicit and repeated textual confirmation."
+        "evidence": "The source packet contains explicit and consistent female references for 赫萝. 女孩 (girl) is used repeatedly: line 220 「女孩说完后」, line 223 「女孩一边说」, line 229 「这女孩好大胆」, line 240 「女孩的回答让罗伦斯感到意外」, line 246 「女孩反问罗伦斯」, line 272 「这女孩似乎会让罗伦斯乱了阵脚」, line 301 「如果女孩真是如假包换的赫萝」, line 353 「从女孩纤细的肩膀长出来」, line 408 「如此厌恶回到村里的女孩」. The female pronoun 她 (she/her) is also used: line 244 「她的模样实在不像在说谎」, line 272 「同意她的说法」, line 274 「她转身露出背部」, line 281 「她窝在貂皮底下」, line 295 「她露出厌恶的表情」. Additionally, line 406 compares 赫萝 to 「被囚禁的公主」 (an imprisoned princess). No male references or contradictory evidence appear in the packet.",
+        "reasoning_summary": "The narration consistently refers to 赫萝 with 女孩 (girl) and 她 (she) across many distinct scenes, and explicitly frames her through a feminine simile (princess). These are third-person gendered references in the text itself, not inferences from the name. There is no conflicting evidence whatsoever. The candidate's decision of female with confidence 1.0 is fully supported."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 5,
+    "item_attempts": 1
   },
   "马贺特": {
     "character_name": "马贺特",
     "gender": "male",
-    "confidence": 0.95,
-    "evidence": "Primary: Multiple instances of male pronoun \"他\" referring to 马贺特: line 2016 \"他的模样与白天没什么两样\", line 2021 \"他一副沉思的模样\", line 2032 \"他轻轻点头后\", line 2128 \"他听到罗伦斯的话之后\", line 2195 \"马贺特轻抚他的下巴\", line 2228 \"他不知道该如何是好\", line 2235 \"但他似乎不断地思考\". No female pronouns found. Character is consistently referred to with male pronouns throughout the novel. | Review: Multiple instances of male pronoun \"他\" referring to 马贺特: line 2032 \"他轻轻点头后\", line 2195 \"马贺特轻抚他的下巴\", line 2228 \"他不知道该如何是好\". Character is consistently referred to with male pronouns throughout the text. No female pronouns found in any context involving 马贺特.",
+    "confidence": 1.0,
+    "evidence": "Primary: Explicit narration uses male pronoun 他 for 马贺特: line 2032 \"马贺特依旧不改表情，他轻轻点头后\"; line 2195 \"马贺特轻抚他的下巴\". Additionally, 马贺特 self-references having a wife at line 2076 \"如果我妻子遇到同样的状况\" (if my wife were in the same situation), confirming male. No contradictory gender evidence found. | Review: Explicit male pronoun 他 is used in narration referring to 马贺特 in the provided packet: line 2032 \"马贺特依旧不改表情，他轻轻点头后\" (Ma Hete did not change expression, he nodded lightly); line 2195 \"马贺特轻抚他的下巴\" (Ma Hete stroked his chin). In both instances, 他 unambiguously refers to 马贺特. No female pronoun 她 or any contradictory gender evidence appears anywhere in the packet. (Note: the candidate's additional cited line 2076 about \"my wife\" is not included in the provided source packet and could not be independently verified, but the two in-packet male pronoun uses are sufficient on their own.)",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "马贺特",
+        "gender": "male",
+        "confidence": 1.0,
+        "evidence": "Explicit narration uses male pronoun 他 for 马贺特: line 2032 \"马贺特依旧不改表情，他轻轻点头后\"; line 2195 \"马贺特轻抚他的下巴\". Additionally, 马贺特 self-references having a wife at line 2076 \"如果我妻子遇到同样的状况\" (if my wife were in the same situation), confirming male. No contradictory gender evidence found."
+      },
       "review": {
         "character_name": "马贺特",
         "gender": "male",
-        "confidence": 0.95,
-        "evidence": "Multiple instances of male pronoun \"他\" referring to 马贺特: line 2032 \"他轻轻点头后\", line 2195 \"马贺特轻抚他的下巴\", line 2228 \"他不知道该如何是好\". Character is consistently referred to with male pronouns throughout the text. No female pronouns found in any context involving 马贺特.",
-        "reasoning_summary": "The textual evidence consistently uses male pronoun \"他\" when referring to 马贺特 across multiple passages. The character is introduced as a bank manager (行长) and all descriptive passages use male pronouns. There are no contradictory references or female pronouns associated with this character. The evidence is clear and consistent throughout the provided text samples."
+        "confidence": 1.0,
+        "evidence": "Explicit male pronoun 他 is used in narration referring to 马贺特 in the provided packet: line 2032 \"马贺特依旧不改表情，他轻轻点头后\" (Ma Hete did not change expression, he nodded lightly); line 2195 \"马贺特轻抚他的下巴\" (Ma Hete stroked his chin). In both instances, 他 unambiguously refers to 马贺特. No female pronoun 她 or any contradictory gender evidence appears anywhere in the packet. (Note: the candidate's additional cited line 2076 about \"my wife\" is not included in the provided source packet and could not be independently verified, but the two in-packet male pronoun uses are sufficient on their own.)",
+        "reasoning_summary": "The source packet contains direct narration using the male pronoun 他 for 马贺特 in two separate contexts (lines 2032 and 2195), which is explicit textual evidence of male gender. All 12 representative contexts consistently refer to 马贺特 with male pronouns, and the dialogue shows him as a serious merchant/banker negotiating with Lawrence, with no gender-ambiguous or contradictory markers. The candidate's third piece of evidence (wife reference at line 2076) falls outside the provided packet, but the in-packet evidence alone fully supports a male determination with maximum confidence."
       },
       "agreement": true
     },
-    "agent_calls": 6
+    "agent_calls": 5,
+    "item_attempts": 1
   },
   "杰廉": {
     "character_name": "杰廉",
     "gender": "male",
     "confidence": 1.0,
-    "evidence": "Primary: Multiple explicit references identify 杰廉 as male: (1) Line 630 describes him as \"男子\" (man) with a missing front tooth; (2) Line 639 uses the male pronoun \"他\" (he) when referring to 杰廉; (3) Line 1170 explicitly states \"一位名为杰廉的男子\" (a man named 杰廉); (4) Line 1173 uses the honorific \"杰廉先生\" (Mr. 杰廉); (5) Line 1188 refers to him as \"杰廉那名年轻人\" (that young man 杰廉); (6) Line 1548 states \"杰廉这名男子\" (this man 杰廉). The evidence is consistent and unambiguous throughout the novel. | Review: Multiple explicit textual references confirm 杰廉 as male: (1) Line 639 uses male pronoun \"他\" (he) when referring to 杰廉; (2) Line 1170 explicitly states \"一位名为杰廉的男子\" (a man named 杰廉); (3) Line 1173 uses the male honorific \"杰廉先生\" (Mr. 杰廉); (4) Line 1548 states \"杰廉这名男子\" (this man 杰廉). The evidence is consistent and unambiguous throughout the text.",
+    "evidence": "Primary: Explicit narration identifies 杰廉 as male. Line 626: \"一名男子挨近过来...男子被胡子遮盖的脸孔看来很年轻\" (a man with a beard-covered young face). Line 630: \"男子露出笑容说，缺了一颗门牙\" (the man smiled). Line 639: \"杰廉...他开口问道\" (pronoun 他). Line 708: \"名叫杰廉的年轻旅行商人\". Line 720: 赫萝 says \"那个叫杰廉的男子\". Line 1170: \"一位名为杰廉的男子\". Line 1173/1175: \"杰廉先生\" (Mr.). Line 1493: \"那个小毛头杰廉\". These explicit nouns, pronouns, and honorifics override any name-based inference. | Review: Multiple explicit textual references mark 杰廉 as male. Line 630: \"男子露出笑容说\" (the man smiled) — this man is identified as 杰廉 in line 634 where he introduces himself: \"小的名叫杰廉\". Line 631: \"这男子小看不得\" (this man). Line 639 uses the male pronoun 他 (\"他开口问道\"). Line 1170: \"一位名为杰廉的男子\" (a man named Jielian). Line 1173/1175: \"杰廉先生\" (Mr. Jielian). Line 1548: \"杰廉这名男子的存在\" (this man named Jielian). Line 1560: \"区区杰廉一名男子\" (Jielian, just one man). These explicit nouns (男子), pronouns (他), and honorifics (先生) directly identify the character as male, not merely name-based inference.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "杰廉",
+        "gender": "male",
+        "confidence": 1.0,
+        "evidence": "Explicit narration identifies 杰廉 as male. Line 626: \"一名男子挨近过来...男子被胡子遮盖的脸孔看来很年轻\" (a man with a beard-covered young face). Line 630: \"男子露出笑容说，缺了一颗门牙\" (the man smiled). Line 639: \"杰廉...他开口问道\" (pronoun 他). Line 708: \"名叫杰廉的年轻旅行商人\". Line 720: 赫萝 says \"那个叫杰廉的男子\". Line 1170: \"一位名为杰廉的男子\". Line 1173/1175: \"杰廉先生\" (Mr.). Line 1493: \"那个小毛头杰廉\". These explicit nouns, pronouns, and honorifics override any name-based inference."
+      },
       "review": {
         "character_name": "杰廉",
         "gender": "male",
         "confidence": 1.0,
-        "evidence": "Multiple explicit textual references confirm 杰廉 as male: (1) Line 639 uses male pronoun \"他\" (he) when referring to 杰廉; (2) Line 1170 explicitly states \"一位名为杰廉的男子\" (a man named 杰廉); (3) Line 1173 uses the male honorific \"杰廉先生\" (Mr. 杰廉); (4) Line 1548 states \"杰廉这名男子\" (this man 杰廉). The evidence is consistent and unambiguous throughout the text.",
-        "reasoning_summary": "The candidate decision is correct. The source text provides multiple explicit references identifying 杰廉 as male, including male pronouns (他), explicit male descriptors (男子), and male honorifics (先生). There are no contradictory references or ambiguous gender indicators. The evidence is consistent across multiple passages."
+        "evidence": "Multiple explicit textual references mark 杰廉 as male. Line 630: \"男子露出笑容说\" (the man smiled) — this man is identified as 杰廉 in line 634 where he introduces himself: \"小的名叫杰廉\". Line 631: \"这男子小看不得\" (this man). Line 639 uses the male pronoun 他 (\"他开口问道\"). Line 1170: \"一位名为杰廉的男子\" (a man named Jielian). Line 1173/1175: \"杰廉先生\" (Mr. Jielian). Line 1548: \"杰廉这名男子的存在\" (this man named Jielian). Line 1560: \"区区杰廉一名男子\" (Jielian, just one man). These explicit nouns (男子), pronouns (他), and honorifics (先生) directly identify the character as male, not merely name-based inference.",
+        "reasoning_summary": "The source packet contains unambiguous, explicit textual evidence of the character's gender. The narration repeatedly refers to 杰廉 with the gendered noun 男子 (man), the male pronoun 他 (he), and the honorific 先生 (Mr.). The character introduces himself as 杰廉 in line 634 immediately following descriptions of \"男子\", and later passages explicitly state \"一位名为杰廉的男子\" and \"杰廉先生\". No contradictory evidence appears in the packet. The candidate's decision of male with confidence 1.0 is fully supported by the explicit textual evidence."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 3,
+    "item_attempts": 1
   },
   "怀兹": {
     "character_name": "怀兹",
     "gender": "male",
-    "confidence": 1.0,
-    "evidence": "Primary: Multiple explicit male pronouns \"他\" refer to 怀兹 throughout the text: line 1357 \"他一发现是罗伦斯\", line 1378 \"还露出笑容回答他\", line 1402 \"想必他早已谨慎比较过\", line 1404 \"他的意思是告诉罗伦斯\", line 1416 \"只见他一脸害羞的模样\", line 1429 \"他一副神魂颠倒的模样\", line 1680 \"只要赫萝给他一点微笑，他就会心满意足\". Additionally, line 1354 describes him as \"年轻人\" (young man). | Review: Line 1354 explicitly describes 怀兹 as \"年轻人\" (young man), which is a definitive male gender indicator. Multiple explicit male pronouns \"他\" consistently refer to 怀兹 throughout the text: line 1357 \"他一发现是罗伦斯\", line 1378 \"还露出笑容回答他\", line 1402 \"想必他早已谨慎比较过\", line 1404 \"他的意思是告诉罗伦斯\", line 1416 \"只见他一脸害羞的模样\", line 1429 \"他一副神魂颠倒的模样\", line 1680 \"只要赫萝给他一点微笑，他就会心满意足\". The character is also referred to as \"金发兑换商\" (blonde exchange merchant) in line 1356, consistent with male characterization.",
+    "confidence": 0.98,
+    "evidence": "Primary: Explicit narration marks 怀兹 as male: line 1354 calls him 「比罗伦斯小几岁的年轻人」(a young man); lines 1357, 1416, 1429 use the male pronoun 他; line 1379 he offers Horo to become 「我的老婆」(his wife), and line 1385 「那我追求她有何不可」 confirms he pursues a woman. Line 1436 「他是个好色鬼」 again uses 他. No contradicting evidence exists. | Review: Independent verification confirms the candidate's evidence directly from the source packet. Multiple narration lines use the male pronoun 他 for 怀兹: line 1357 「他一发现是罗伦斯…」, line 1416 「只见他一脸害羞的模样」, line 1429 「他一副神魂颠倒的模样」, line 1436 「他是个好色鬼」(spoken by Lawrence about 怀兹). Line 1379 has 怀兹 himself offering 「不然干脆当我的老婆」 (become my wife), and line 1385 「那我追求她有何不可」 shows him pursuing the female character Horo — both only coherent for a male speaker in context. Additionally, line 1415 Horo addresses him as 「这位先生」(this gentleman), reinforcing male gender. No contradicting evidence appears anywhere in the packet. Note: line 1354's 「年轻人」 is technically gender-neutral, but this is immaterial given the explicit 他-pronoun usages and the marriage/pursuit statements.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "怀兹",
+        "gender": "male",
+        "confidence": 0.98,
+        "evidence": "Explicit narration marks 怀兹 as male: line 1354 calls him 「比罗伦斯小几岁的年轻人」(a young man); lines 1357, 1416, 1429 use the male pronoun 他; line 1379 he offers Horo to become 「我的老婆」(his wife), and line 1385 「那我追求她有何不可」 confirms he pursues a woman. Line 1436 「他是个好色鬼」 again uses 他. No contradicting evidence exists."
+      },
       "review": {
         "character_name": "怀兹",
         "gender": "male",
-        "confidence": 1.0,
-        "evidence": "Line 1354 explicitly describes 怀兹 as \"年轻人\" (young man), which is a definitive male gender indicator. Multiple explicit male pronouns \"他\" consistently refer to 怀兹 throughout the text: line 1357 \"他一发现是罗伦斯\", line 1378 \"还露出笑容回答他\", line 1402 \"想必他早已谨慎比较过\", line 1404 \"他的意思是告诉罗伦斯\", line 1416 \"只见他一脸害羞的模样\", line 1429 \"他一副神魂颠倒的模样\", line 1680 \"只要赫萝给他一点微笑，他就会心满意足\". The character is also referred to as \"金发兑换商\" (blonde exchange merchant) in line 1356, consistent with male characterization.",
-        "reasoning_summary": "The evidence is conclusive and explicit. The term \"年轻人\" (young man) in line 1354 provides definitive male gender identification. This is reinforced by consistent use of male pronouns \"他\" throughout the text when referring to 怀兹. No contradictory evidence exists. The candidate decision is fully supported by the textual evidence."
+        "confidence": 0.98,
+        "evidence": "Independent verification confirms the candidate's evidence directly from the source packet. Multiple narration lines use the male pronoun 他 for 怀兹: line 1357 「他一发现是罗伦斯…」, line 1416 「只见他一脸害羞的模样」, line 1429 「他一副神魂颠倒的模样」, line 1436 「他是个好色鬼」(spoken by Lawrence about 怀兹). Line 1379 has 怀兹 himself offering 「不然干脆当我的老婆」 (become my wife), and line 1385 「那我追求她有何不可」 shows him pursuing the female character Horo — both only coherent for a male speaker in context. Additionally, line 1415 Horo addresses him as 「这位先生」(this gentleman), reinforcing male gender. No contradicting evidence appears anywhere in the packet. Note: line 1354's 「年轻人」 is technically gender-neutral, but this is immaterial given the explicit 他-pronoun usages and the marriage/pursuit statements.",
+        "reasoning_summary": "The character 怀兹 is unambiguously male. The narrative consistently refers to him with the male pronoun 他 (lines 1357, 1416, 1429, 1436). He propositioned Horo to be his wife (line 1379) and declared his intention to court her (line 1385), actions indicating a male character pursuing a woman. Horo addresses him as 「这位先生」 (gentleman, line 1415). All cited passages check out against the source packet, and there is no contradictory evidence. The candidate's decision and high confidence are well supported; I concur."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 2,
+    "item_attempts": 1
   },
   "采购人员": {
     "character_name": "采购人员",
     "gender": "male",
     "confidence": 1.0,
-    "evidence": "Primary: Line 1021 explicitly states: \"被唤来的是一名比起拿稻草，更适合拿羽毛笔的男子，想必是负责鉴定商品的采购人员。\" (The person called over was a man who seemed more suited to holding a quill than straw, presumably the purchasing agent responsible for appraising goods.) Line 1076 further confirms: \"罗伦斯第一次看到负责鉴定的采购人员如此低声下气。罗伦斯看过无数假装摆出低姿态的人，但眼前的男子似乎是发自真心。\" (Lorenz saw the purchasing agent responsible for appraisal being so humble for the first time... but the man before him seemed sincere.) Both lines explicitly identify the purchasing agent as a \"男子\" (man). | Review: Line 1021 explicitly states: \"被唤来的是一名比起拿稻草，更适合拿羽毛笔的男子，想必是负责鉴定商品的采购人员。\" (The person called over was a man who seemed more suited to holding a quill than straw, presumably the purchasing agent responsible for appraising goods.) Line 1076 further confirms: \"罗伦斯第一次看到负责鉴定的采购人员如此低声下气。罗伦斯看过无数假装摆出低姿态的人，但眼前的男子似乎是发自真心。\" (Lorenz saw the purchasing agent responsible for appraisal being so humble for the first time... but the man before him seemed sincere.) Both lines explicitly identify the purchasing agent as a \"男子\" (man).",
+    "evidence": "Primary: Line 1021 explicitly states 被唤来的是一名比起拿稻草，更适合拿羽毛笔的男子，想必是负责鉴定商品的采购人员 (the summoned person is a man, presumably the procurement officer in charge of appraisal). Line 1076 again refers to him as 眼前的男子 (the man before him). Direct narration supplies unambiguous male gender. | Review: Line 1021: \"被唤来的是一名比起拿稻草，更适合拿羽毛笔的男子，想必是负责鉴定商品的采购人员\" — the summoned person described as 男子 (man) is explicitly identified as the procurement officer (采购人员). Line 1076: \"罗伦斯第一次看到负责鉴定的采购人员如此低声下气……但眼前的男子似乎是发自真心\" — again refers to this procurement officer as 男子 (the man). Both occurrences of the character's appearance in the source use explicit masculine nouns.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "采购人员",
+        "gender": "male",
+        "confidence": 1.0,
+        "evidence": "Line 1021 explicitly states 被唤来的是一名比起拿稻草，更适合拿羽毛笔的男子，想必是负责鉴定商品的采购人员 (the summoned person is a man, presumably the procurement officer in charge of appraisal). Line 1076 again refers to him as 眼前的男子 (the man before him). Direct narration supplies unambiguous male gender."
+      },
       "review": {
         "character_name": "采购人员",
         "gender": "male",
         "confidence": 1.0,
-        "evidence": "Line 1021 explicitly states: \"被唤来的是一名比起拿稻草，更适合拿羽毛笔的男子，想必是负责鉴定商品的采购人员。\" (The person called over was a man who seemed more suited to holding a quill than straw, presumably the purchasing agent responsible for appraising goods.) Line 1076 further confirms: \"罗伦斯第一次看到负责鉴定的采购人员如此低声下气。罗伦斯看过无数假装摆出低姿态的人，但眼前的男子似乎是发自真心。\" (Lorenz saw the purchasing agent responsible for appraisal being so humble for the first time... but the man before him seemed sincere.) Both lines explicitly identify the purchasing agent as a \"男子\" (man).",
-        "reasoning_summary": "The candidate decision is correct. The text provides explicit, unambiguous evidence that the purchasing agent (采购人员) is male. Line 1021 directly describes the person as \"一名...男子\" (a man) when introducing the purchasing agent. Line 1076 again refers to the purchasing agent as \"男子\" (man) when describing his demeanor. This is not name-based inference but direct textual identification. The confidence of 1.0 is justified given the explicit nature of the evidence."
+        "evidence": "Line 1021: \"被唤来的是一名比起拿稻草，更适合拿羽毛笔的男子，想必是负责鉴定商品的采购人员\" — the summoned person described as 男子 (man) is explicitly identified as the procurement officer (采购人员). Line 1076: \"罗伦斯第一次看到负责鉴定的采购人员如此低声下气……但眼前的男子似乎是发自真心\" — again refers to this procurement officer as 男子 (the man). Both occurrences of the character's appearance in the source use explicit masculine nouns.",
+        "reasoning_summary": "The source packet contains explicit textual evidence of the character's gender. Line 1021 directly states the summoned person (the procurement officer) is 男子 (a man), and line 1076 refers to him again as 眼前的男子 (the man before him). This is direct narration, not name-based inference. The speaker-labelled dialogue samples are consistent with this and present no contradiction. Therefore the candidate's decision of male with confidence 1.0 is correct."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 3,
+    "item_attempts": 1
   },
   "叶勒": {
     "character_name": "叶勒",
     "gender": "male",
     "confidence": 1.0,
-    "evidence": "Primary: Multiple explicit masculine pronouns \"他\" (he) refer to 叶勒 throughout the novel: line 98 \"他就在那块麦田里\", line 114 \"他一口气割下麦子后\", line 125 \"根本没法与他说话\", line 128 \"顺便与他小酌几杯\", line 2405 \"他出现在城里\", line 2703 \"他露出些许悲伤的表情走到前面\". No contradictory feminine pronouns appear. | Review: Multiple explicit masculine pronouns \"他\" (he) refer to 叶勒 throughout the novel: line 98 \"他就在那块麦田里\", line 114 \"他一口气割下麦子后\", line 125 \"根本没法与他说话\", line 128 \"顺便与他小酌几杯\", line 2405 \"他出现在城里\", line 2703 \"他露出些许悲伤的表情走到前面\". No contradictory feminine pronouns appear.",
+    "evidence": "Primary: Explicit male pronouns (他) used consistently in narration throughout the novel. Line 98: 「他就在那块麦田里」; line 114: 「他一口气割下麦子后」; line 125: 「根本没法与他说话」; line 128: 「顺便与他小酌几杯」; line 2405: 「他出现在城里...村长也都委托他做交易」; line 2408: 「他和梅迪欧商行的关系匪浅」; line 2703: 「他露出些许悲伤的表情走到前面」; line 2706: 「他身上穿着的衣物...他与梅迪欧商行的关系」. These are unambiguous narration-level third-person male references. | Review: The narration consistently refers to 叶勒 with the explicit male third-person pronoun 他 (he). Line 98: 「叶勒在那儿...他就在那块麦田里」. Line 114: 「叶勒沾满泥土和汗水的黑脸露出苦笑，他一口气割下麦子后」. Line 125: 「叶勒会被关在...谷仓里整整一个星期，根本没法与他说话」. Line 128: 「罗伦斯原本打算跟叶勒聊聊...顺便与他小酌几杯」. Line 2405: 「叶勒现在应该...被关在谷仓里才对。他出现在城里」. Line 2408: 「看来他和梅迪欧商行的关系匪浅」. Line 2706: 「叶勒说话的神情...但看了他身上穿着的衣物...他与梅迪欧商行的关系」. Line 2707: 「他身上穿的尽是...村民买不起的衣物」. All third-person references to 叶勒 in the narration use the male pronoun 他; no female pronouns (她) or other gender markers are attached to this character.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "叶勒",
+        "gender": "male",
+        "confidence": 1.0,
+        "evidence": "Explicit male pronouns (他) used consistently in narration throughout the novel. Line 98: 「他就在那块麦田里」; line 114: 「他一口气割下麦子后」; line 125: 「根本没法与他说话」; line 128: 「顺便与他小酌几杯」; line 2405: 「他出现在城里...村长也都委托他做交易」; line 2408: 「他和梅迪欧商行的关系匪浅」; line 2703: 「他露出些许悲伤的表情走到前面」; line 2706: 「他身上穿着的衣物...他与梅迪欧商行的关系」. These are unambiguous narration-level third-person male references."
+      },
       "review": {
         "character_name": "叶勒",
         "gender": "male",
         "confidence": 1.0,
-        "evidence": "Multiple explicit masculine pronouns \"他\" (he) refer to 叶勒 throughout the novel: line 98 \"他就在那块麦田里\", line 114 \"他一口气割下麦子后\", line 125 \"根本没法与他说话\", line 128 \"顺便与他小酌几杯\", line 2405 \"他出现在城里\", line 2703 \"他露出些许悲伤的表情走到前面\". No contradictory feminine pronouns appear.",
-        "reasoning_summary": "The character 叶勒 is consistently referred to with masculine pronouns \"他\" (he/him) across multiple instances in the text. There are no instances of feminine pronouns \"她\" (she/her) being used for this character. The evidence is clear and unambiguous, supporting a male gender classification with high confidence."
+        "evidence": "The narration consistently refers to 叶勒 with the explicit male third-person pronoun 他 (he). Line 98: 「叶勒在那儿...他就在那块麦田里」. Line 114: 「叶勒沾满泥土和汗水的黑脸露出苦笑，他一口气割下麦子后」. Line 125: 「叶勒会被关在...谷仓里整整一个星期，根本没法与他说话」. Line 128: 「罗伦斯原本打算跟叶勒聊聊...顺便与他小酌几杯」. Line 2405: 「叶勒现在应该...被关在谷仓里才对。他出现在城里」. Line 2408: 「看来他和梅迪欧商行的关系匪浅」. Line 2706: 「叶勒说话的神情...但看了他身上穿着的衣物...他与梅迪欧商行的关系」. Line 2707: 「他身上穿的尽是...村民买不起的衣物」. All third-person references to 叶勒 in the narration use the male pronoun 他; no female pronouns (她) or other gender markers are attached to this character.",
+        "reasoning_summary": "The candidate's decision is fully supported by explicit textual evidence. Multiple independent narration passages (lines 98, 114, 125, 128, 2405, 2408, 2706, 2707) use the unambiguous male third-person pronoun 他 when referring to 叶勒. Each instance was checked for referent clarity, and all clearly point to 叶勒 (e.g., the granary confinement, the drinking invitation, the 梅迪欧商行 dealings). There is no contradictory evidence suggesting any other gender. The character is male with the highest confidence."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 4,
+    "item_attempts": 1
   },
   "追兵": {
     "character_name": "追兵",
-    "gender": "unknown",
-    "confidence": 0.8,
-    "evidence": "Source packet explicitly instructs to use dialogue metadata and return unknown if evidence remains absent. No dialogue metadata evidence for gender assignment was provided. Candidate's reliance on narration evidence (line 1941) violates specified methodology.",
+    "gender": "male",
+    "confidence": 0.925,
+    "evidence": "Primary: Explicit narration identifies pursuers as men: line 1941 \"两名男子怒气冲冲地从距离不远的小巷子狂奔而过\"; line 1979 \"手上拿着木棍的男子们随即追了上来\"; line 1980 \"说话的男子用棒子敲打眼前锁上的栅栏\". These are the male pursuers of Lawrence/Holo (梅迪欧商行手下, line 2761). | Review: Candidate cites explicit narration marking the pursuers (追兵) as male: line 1941 \"两名男子...狂奔而过\"; line 1979 \"手上拿着木棍的男子们随即追了上来\"; line 1980 \"说话的男子用棒子敲打眼前锁上的栅栏\". These describe the pursuing men chasing Lawrence/Holo, and line 2761 ties them to 梅迪欧商行手下. While the literal name 追兵 was not found, the gender of the pursuers is explicitly stated via repeated 男子 (man) markers, which is direct textual evidence rather than name-based inference.",
     "verification": {
       "reviewed": true,
-      "review": {
+      "primary": {
         "character_name": "追兵",
-        "gender": "unknown",
-        "confidence": 0.2,
-        "evidence": "No literal name occurrence found for \"追兵\". Source packet instructs to use dialogue metadata and return unknown if evidence remains absent. Candidate relies on narration evidence (line 1941) rather than dialogue metadata as specified. Dialogue metadata evidence for gender assignment is not provided.",
-        "reasoning_summary": "Following source packet instructions: no literal name occurrence found, must use dialogue metadata, return unknown if evidence absent. Candidate's reliance on narration rather than dialogue metadata violates specified methodology. Insufficient dialogue metadata evidence to support gender determination."
+        "gender": "male",
+        "confidence": 0.95,
+        "evidence": "Explicit narration identifies pursuers as men: line 1941 \"两名男子怒气冲冲地从距离不远的小巷子狂奔而过\"; line 1979 \"手上拿着木棍的男子们随即追了上来\"; line 1980 \"说话的男子用棒子敲打眼前锁上的栅栏\". These are the male pursuers of Lawrence/Holo (梅迪欧商行手下, line 2761)."
       },
-      "agreement": false,
-      "adjudication": {
-        "character_name": "追兵",
-        "gender": "unknown",
-        "confidence": 0.8,
-        "evidence": "Source packet explicitly instructs to use dialogue metadata and return unknown if evidence remains absent. No dialogue metadata evidence for gender assignment was provided. Candidate's reliance on narration evidence (line 1941) violates specified methodology.",
-        "reasoning_summary": "Following source packet instructions: no literal name occurrence found, must use dialogue metadata, return unknown if evidence absent. Candidate's narration-based approach contradicts specified methodology. Insufficient dialogue metadata evidence to support gender determination."
-      }
-    },
-    "agent_calls": 8
-  },
-  "村民": {
-    "character_name": "村民",
-    "gender": "unknown",
-    "confidence": 1.0,
-    "evidence": "Primary: \"村民\" is a collective noun referring to villagers in general, not a specific individual character. It appears throughout the novel as a generic reference to the villagers of Pasro village (e.g., lines 7, 10, 92, 131, 396, 431, 2705, 2718). There is no specific character named \"村民\" with individual gender attributes. A collective group cannot be assigned a single gender. | Review: \"村民\" appears throughout the text as a collective noun referring to the villagers of Pasro village in general, not as a specific individual character. Examples include: line 7 \"勤奋种麦的村民们\" (hardworking villagers who plant wheat), line 10 \"这里的村民\" (the villagers here), line 92 \"村民的生活\" (the villagers' lives), line 131 \"村民就会赶走外人\" (the villagers will drive away outsiders), line 396 \"村民们应该会很困扰\" (the villagers should be very troubled), line 431 \"村民们一看到麦子收成不好\" (as soon as the villagers see the wheat harvest is bad), line 2705 \"懂得这笔交易的村民很少\" (few villagers understand this transaction), line 2718 \"所有村民到现在都仍然心存感激\" (all the villagers are still grateful). The term consistently refers to the collective group of villagers, never to a specific named individual. A collective group cannot be assigned a single gender.",
-    "verification": {
-      "reviewed": true,
       "review": {
-        "character_name": "村民",
-        "gender": "unknown",
-        "confidence": 1.0,
-        "evidence": "\"村民\" appears throughout the text as a collective noun referring to the villagers of Pasro village in general, not as a specific individual character. Examples include: line 7 \"勤奋种麦的村民们\" (hardworking villagers who plant wheat), line 10 \"这里的村民\" (the villagers here), line 92 \"村民的生活\" (the villagers' lives), line 131 \"村民就会赶走外人\" (the villagers will drive away outsiders), line 396 \"村民们应该会很困扰\" (the villagers should be very troubled), line 431 \"村民们一看到麦子收成不好\" (as soon as the villagers see the wheat harvest is bad), line 2705 \"懂得这笔交易的村民很少\" (few villagers understand this transaction), line 2718 \"所有村民到现在都仍然心存感激\" (all the villagers are still grateful). The term consistently refers to the collective group of villagers, never to a specific named individual. A collective group cannot be assigned a single gender.",
-        "reasoning_summary": "The term \"村民\" (villager) functions as a collective noun throughout the text, referring to the general population of Pasro village rather than any specific individual character. It appears in contexts describing group behaviors, collective experiences, and general references to the village community. There is no evidence of a specific character named \"村民\" with individual gender attributes. Since this is a collective reference to a group rather than an individual, gender cannot be determined."
+        "character_name": "追兵",
+        "gender": "male",
+        "confidence": 0.9,
+        "evidence": "Candidate cites explicit narration marking the pursuers (追兵) as male: line 1941 \"两名男子...狂奔而过\"; line 1979 \"手上拿着木棍的男子们随即追了上来\"; line 1980 \"说话的男子用棒子敲打眼前锁上的栅栏\". These describe the pursuing men chasing Lawrence/Holo, and line 2761 ties them to 梅迪欧商行手下. While the literal name 追兵 was not found, the gender of the pursuers is explicitly stated via repeated 男子 (man) markers, which is direct textual evidence rather than name-based inference.",
+        "reasoning_summary": "The candidate avoided name-based inference by citing explicit gender-marked narration (男子/男子们) describing the pursuers. Although the literal character name was not located, the textual references consistently identify the pursuers as male through repeated gender markers. No contradictory evidence was presented. Confidence is slightly reduced from the candidate's 0.95 because the cited lines could not be independently re-verified from the provided packet."
       },
       "agreement": true
     },
-    "agent_calls": 4
+    "agent_calls": 7,
+    "item_attempts": 1
+  },
+  "村民": {
+    "character_name": "村民",
+    "gender": "male",
+    "confidence": 0.675,
+    "evidence": "Primary: The villager speaking with 罗伦斯 is explicitly narrated as 「农夫」 (farmer) at lines 95–99 (\"罗伦斯朝正在帕斯罗村的麦田一角…的农夫打招呼\" line 95; \"农夫晒得黝黑的脸上堆满了笑容说道\" line 99). The festival-crowd villager dialogues (lines 104–113) are narrated at line 120 as \"刚刚不停叫喊的男子们紧追在后\" — explicitly men. However, the character 村民 is a collective group spanning many villagers, some of whose gender is not specified (e.g., the deep-mountain villager at lines 23–25 has no gender marker), so confidence is moderate. | Review: Explicit textual evidence marks the speaking villagers as male. The villager conversing with 罗伦斯 in the wheat field is narrated as 「农夫」 (farmer, male) at lines 95–99 (\"罗伦斯朝正在帕斯罗村的麦田一角…的农夫打招呼\" line 95; \"农夫晒得黝黑的脸上堆满了笑容说道\" line 99). The festival-crowd dialogues (lines 104–113) are attributed to explicitly male speakers per the cited line 120 narration \"刚刚不停叫喊的男子们紧追在后\". Line 132 also refers to \"农夫们\" returning from the fields. However, the character 村民 is a collective spanning many individuals; some villagers (e.g., the deep-mountain villager at lines 23–25, and 赫萝's friend referenced at lines 1608–1610) carry no gender marker. Thus every explicitly gendered instance of this collective is male, supporting male, but the collective's unspecified members warrant only moderate confidence.",
+    "verification": {
+      "reviewed": true,
+      "primary": {
+        "character_name": "村民",
+        "gender": "male",
+        "confidence": 0.7,
+        "evidence": "The villager speaking with 罗伦斯 is explicitly narrated as 「农夫」 (farmer) at lines 95–99 (\"罗伦斯朝正在帕斯罗村的麦田一角…的农夫打招呼\" line 95; \"农夫晒得黝黑的脸上堆满了笑容说道\" line 99). The festival-crowd villager dialogues (lines 104–113) are narrated at line 120 as \"刚刚不停叫喊的男子们紧追在后\" — explicitly men. However, the character 村民 is a collective group spanning many villagers, some of whose gender is not specified (e.g., the deep-mountain villager at lines 23–25 has no gender marker), so confidence is moderate."
+      },
+      "review": {
+        "character_name": "村民",
+        "gender": "male",
+        "confidence": 0.65,
+        "evidence": "Explicit textual evidence marks the speaking villagers as male. The villager conversing with 罗伦斯 in the wheat field is narrated as 「农夫」 (farmer, male) at lines 95–99 (\"罗伦斯朝正在帕斯罗村的麦田一角…的农夫打招呼\" line 95; \"农夫晒得黝黑的脸上堆满了笑容说道\" line 99). The festival-crowd dialogues (lines 104–113) are attributed to explicitly male speakers per the cited line 120 narration \"刚刚不停叫喊的男子们紧追在后\". Line 132 also refers to \"农夫们\" returning from the fields. However, the character 村民 is a collective spanning many individuals; some villagers (e.g., the deep-mountain villager at lines 23–25, and 赫萝's friend referenced at lines 1608–1610) carry no gender marker. Thus every explicitly gendered instance of this collective is male, supporting male, but the collective's unspecified members warrant only moderate confidence.",
+        "reasoning_summary": "The candidate's decision of male is supported by direct textual evidence: the field worker is explicitly a 农夫 (male farmer) and the crowd voices are 男子们 (men). No explicit female villager is identified in the packet. The main caveat is that 村民 is a collective category whose individual members are not all gendered, so confidence should remain moderate rather than high. I agree with the candidate's male classification and roughly with the 0.7 confidence, slightly tempering it to 0.65 due to the collective's unspecified members."
+      },
+      "agreement": true
+    },
+    "agent_calls": 7,
+    "item_attempts": 1
   },
   "米隆商行的人": {
     "character_name": "米隆商行的人",
     "gender": "unknown",
-    "confidence": 1.0,
-    "evidence": "Primary: The character \"米隆商行的人\" refers to multiple unnamed individuals working for the Milon Trading Company. The text uses the gender-neutral term \"人\" (people/person) throughout all 12 occurrences (lines 1542-1549, 2106, 2265, 2289, 2557, 2742, 2898). No explicit pronouns, gendered titles, kinship terms, or physical descriptions are provided for these individuals. The dialogue samples (lines 2105, 2108, 2269, 2271, 2273, 2301-2302, 2318, 2320, 2323-2324) are from unnamed members of this group but contain no gender-identifying information. This is a collective reference to multiple individuals with no gender specification in the text. | Review: The character '米隆商行的人' refers to multiple unnamed individuals working for the Milon Trading Company. The text uses the gender-neutral term '人' (people/person) throughout all 12 occurrences (lines 1542-1549, 2106, 2265, 2289, 2557, 2742, 2898). No explicit pronouns, gendered titles, kinship terms, or physical descriptions are provided for these individuals. The dialogue samples (lines 2105, 2108, 2269, 2271, 2273, 2301-2302, 2318, 2320, 2323-2324) are from unnamed members of this group but contain no gender-identifying information. This is a collective reference to multiple individuals with no gender specification in the text.",
+    "confidence": 0.0,
+    "evidence": "Review failed validation: missing tool call",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "米隆商行的人",
+        "gender": "male",
+        "confidence": 0.85,
+        "evidence": "Line 2319 explicitly refers to the 商行的人 (member of 米隆商行) with the masculine third-person pronoun \"他\": \"商行的人坐在马车里一边说，一边拉起赫萝。虽然早知道赫萝是狼的化身，但露出来的狼耳朵似乎还是让他吓了一跳。\" The novel consistently uses \"她\" for female characters (e.g., 赫萝), so \"他\" is a clear masculine pronoun marker for this character."
+      },
       "review": {
         "character_name": "米隆商行的人",
         "gender": "unknown",
-        "confidence": 1.0,
-        "evidence": "The character '米隆商行的人' refers to multiple unnamed individuals working for the Milon Trading Company. The text uses the gender-neutral term '人' (people/person) throughout all 12 occurrences (lines 1542-1549, 2106, 2265, 2289, 2557, 2742, 2898). No explicit pronouns, gendered titles, kinship terms, or physical descriptions are provided for these individuals. The dialogue samples (lines 2105, 2108, 2269, 2271, 2273, 2301-2302, 2318, 2320, 2323-2324) are from unnamed members of this group but contain no gender-identifying information. This is a collective reference to multiple individuals with no gender specification in the text.",
-        "reasoning_summary": "The character designation '米隆商行的人' is a collective reference to multiple unnamed employees of the Milon Trading Company. All textual references use the gender-neutral Chinese term '人' (person/people). No individual member of this group is identified with gendered pronouns (他/她), gendered titles, kinship terms, or physical descriptions that would indicate gender. The dialogue attributed to unnamed members of this group contains no gender-identifying language. Therefore, the gender cannot be determined from the available evidence."
+        "confidence": 0.0,
+        "evidence": "Review failed validation: gender must be one of ('male', 'female', 'unknown')",
+        "reasoning_summary": "review unavailable"
       },
-      "agreement": true
+      "agreement": false,
+      "adjudication": {
+        "character_name": "米隆商行的人",
+        "gender": "unknown",
+        "confidence": 0.0,
+        "evidence": "Review failed validation: missing tool call",
+        "reasoning_summary": "review unavailable"
+      }
     },
-    "agent_calls": 3
+    "agent_calls": 14,
+    "item_attempts": 1
   },
   "骑士": {
     "character_name": "骑士",
     "gender": "male",
-    "confidence": 0.925,
-    "evidence": "Primary: Line 50 explicitly uses the male pronoun \"他\" (he/him) when describing the knight: \"短短的金发似乎刚剃不久，体格也看不出身经百战的样子。或许是刚刚成为骑士，所以显得趾高气扬。\" Line 55 also uses \"他\" referring to the knight's pride: \"不过，身为骑士的自尊，让他从点头到伸手取糖花了不少时间。\" The physical description of \"短短的金发\" (short blonde hair) and the context of being a \"下级骑士\" (lower-ranking knight) further support male gender identification. | Review: Line 44 uses male pronoun \"他\" (he/him) referring to the knight: \"那语气仿佛自己不用报上名来，每个人也该认得他似的。\" Line 55 also uses \"他\" referring to the knight's pride: \"不过，身为骑士的自尊，让他从点头到伸手取糖花了不少时间。\" The consistent use of male pronouns throughout the text when referring to the knight provides clear gender identification.",
+    "confidence": 0.97,
+    "evidence": "Primary: Narration uses the explicit masculine pronoun 他 (he) for the knight: line 44 \"每个人也该认得他似的\", line 50 \"这代表他只是一名下级骑士\" (also describes short blond hair/physique), and line 55 \"身为骑士的自尊，让他从点头到伸手取糖\". These are unambiguous third-person masculine pronouns in direct narration, establishing male gender. | Review: Direct narration uses the explicit masculine third-person pronoun 他 (he) for the knight in three separate passages: line 44 \"每个人也该认得他似的\" (referring to the knight's assumption that he should be recognized); line 50 \"这代表他只是一名下级骑士\" (explicitly describing the knight's rank, with 他 = the knight, alongside short blond hair and unremarkable physique); and line 55 \"身为骑士的自尊，让他从点头到伸手取糖花了不少时间\" (the knight's pride made HIM take time to reach for the candy). All three pronoun instances unambiguously refer to the knight in the narrator's voice, establishing male gender. No conflicting evidence (no 她, no female-marking terms) appears anywhere in the packet.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "骑士",
+        "gender": "male",
+        "confidence": 0.97,
+        "evidence": "Narration uses the explicit masculine pronoun 他 (he) for the knight: line 44 \"每个人也该认得他似的\", line 50 \"这代表他只是一名下级骑士\" (also describes short blond hair/physique), and line 55 \"身为骑士的自尊，让他从点头到伸手取糖\". These are unambiguous third-person masculine pronouns in direct narration, establishing male gender."
+      },
       "review": {
         "character_name": "骑士",
         "gender": "male",
-        "confidence": 0.9,
-        "evidence": "Line 44 uses male pronoun \"他\" (he/him) referring to the knight: \"那语气仿佛自己不用报上名来，每个人也该认得他似的。\" Line 55 also uses \"他\" referring to the knight's pride: \"不过，身为骑士的自尊，让他从点头到伸手取糖花了不少时间。\" The consistent use of male pronouns throughout the text when referring to the knight provides clear gender identification.",
-        "reasoning_summary": "The candidate decision correctly identifies male gender based on pronoun usage, but contains an error in citing line 50 as containing \"他\" - the actual text of line 50 does not include this pronoun. However, lines 44 and 55 do contain clear male pronoun references to the knight. The physical description of short blonde hair and lower-ranking knight status are secondary indicators but not definitive on their own. The consistent use of \"他\" (he/him) when referring to the knight provides strong textual evidence for male gender identification."
+        "confidence": 0.97,
+        "evidence": "Direct narration uses the explicit masculine third-person pronoun 他 (he) for the knight in three separate passages: line 44 \"每个人也该认得他似的\" (referring to the knight's assumption that he should be recognized); line 50 \"这代表他只是一名下级骑士\" (explicitly describing the knight's rank, with 他 = the knight, alongside short blond hair and unremarkable physique); and line 55 \"身为骑士的自尊，让他从点头到伸手取糖花了不少时间\" (the knight's pride made HIM take time to reach for the candy). All three pronoun instances unambiguously refer to the knight in the narrator's voice, establishing male gender. No conflicting evidence (no 她, no female-marking terms) appears anywhere in the packet.",
+        "reasoning_summary": "The candidate's decision is fully supported by explicit textual evidence. Chinese third-person pronouns distinguish gender, and the narration consistently uses 他 (masculine) for the knight at lines 44, 50, and 55, all of which clearly reference the knight himself (recognition, rank, and taking candy). The decision is not based on name inference or stereotype (e.g., the term 骑士/knight alone would not be conclusive, but the pronoun is). No contradictory evidence exists in the provided excerpts. Confidence is appropriately high given multiple unambiguous pronoun uses."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 3,
+    "item_attempts": 1
   },
   "老卸货工": {
     "character_name": "老卸货工",
     "gender": "male",
-    "confidence": 1.0,
-    "evidence": "Primary: Line 1983 explicitly describes the character as \"一名留有胡子，稍稍上了年纪的男子\" (a man with a beard, slightly older). Lines 1998 and 2006 use the masculine pronoun \"他\" (he/his) when referring to the old unloading worker: \"老卸货工笑着说，他的笑声让人感到无比安心\" and \"老卸货工似乎见惯了这种事态，他用沉稳的口吻对罗伦斯说\". The character is consistently identified as male through both explicit description and pronoun usage. | Review: Line 1983 explicitly describes the character as \"一名留有胡子，稍稍上了年纪的男子\" (a man with a beard, slightly older). Lines 1998 and 2006 use the masculine pronoun \"他\" (he/his) when referring to the old unloading worker: \"老卸货工笑着说，他的笑声让人感到无比安心\" and \"老卸货工似乎见惯了这种事态，他用沉稳的口吻对罗伦斯说\". The character is consistently identified as male through both explicit description and pronoun usage.",
+    "confidence": 0.98,
+    "evidence": "Primary: Line 1983 explicitly describes the man: \"一名留有胡子，稍稍上了年纪的男子从里面走出来\" (a man with a beard, somewhat older, came out), and line 1987 identifies this speaker as \"说话气势十足的老卸货工\" (the old stevedore who spoke with great vigor). Additional strong evidence: the character is repeatedly referred to with male pronouns \"他\" (lines 1998, 2005, 2006, 2008, 2011, 2014) and called \"男子\" (lines 1983, 1985, 1986). Explicit physical description (beard) and male pronouns support male gender. | Review: Line 1983 explicitly introduces the character as \"一名留有胡子，稍稍上了年纪的男子\" (a man with a beard, somewhat older), with \"男子\" (man) used repeatedly in lines 1983, 1985, 1986. Line 1987 links this bearded man who spoke with vigor to \"说话气势十足的老卸货工\" (the old stevedore who spoke with great vigor). The character is additionally referenced with male pronouns \"他的\" (line 1998), \"他用\" (line 2006), \"他所\" (line 2008), and \"他说\" (line 2011). Physical description (beard) plus explicit male noun and pronouns confirm male gender with no contradicting evidence.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "老卸货工",
+        "gender": "male",
+        "confidence": 0.98,
+        "evidence": "Line 1983 explicitly describes the man: \"一名留有胡子，稍稍上了年纪的男子从里面走出来\" (a man with a beard, somewhat older, came out), and line 1987 identifies this speaker as \"说话气势十足的老卸货工\" (the old stevedore who spoke with great vigor). Additional strong evidence: the character is repeatedly referred to with male pronouns \"他\" (lines 1998, 2005, 2006, 2008, 2011, 2014) and called \"男子\" (lines 1983, 1985, 1986). Explicit physical description (beard) and male pronouns support male gender."
+      },
       "review": {
         "character_name": "老卸货工",
         "gender": "male",
-        "confidence": 1.0,
-        "evidence": "Line 1983 explicitly describes the character as \"一名留有胡子，稍稍上了年纪的男子\" (a man with a beard, slightly older). Lines 1998 and 2006 use the masculine pronoun \"他\" (he/his) when referring to the old unloading worker: \"老卸货工笑着说，他的笑声让人感到无比安心\" and \"老卸货工似乎见惯了这种事态，他用沉稳的口吻对罗伦斯说\". The character is consistently identified as male through both explicit description and pronoun usage.",
-        "reasoning_summary": "The evidence is clear and consistent. Line 1983 provides an explicit description of the character as a man with a beard. Multiple instances of masculine pronouns (他) are used when referring to the character throughout the text. There are no contradictions or ambiguous references. The gender identification is well-supported by direct textual evidence."
+        "confidence": 0.98,
+        "evidence": "Line 1983 explicitly introduces the character as \"一名留有胡子，稍稍上了年纪的男子\" (a man with a beard, somewhat older), with \"男子\" (man) used repeatedly in lines 1983, 1985, 1986. Line 1987 links this bearded man who spoke with vigor to \"说话气势十足的老卸货工\" (the old stevedore who spoke with great vigor). The character is additionally referenced with male pronouns \"他的\" (line 1998), \"他用\" (line 2006), \"他所\" (line 2008), and \"他说\" (line 2011). Physical description (beard) plus explicit male noun and pronouns confirm male gender with no contradicting evidence.",
+        "reasoning_summary": "The candidate's cited evidence is verified against the source text. Line 1983 describes the character as a bearded man (男子) who came out and shouted; line 1987 identifies this speaker as the 老卸货工. Male pronouns (他的, 他用, 他所, 他说) in lines 1998, 2006, 2008, and 2011 explicitly mark the character as male. The presence of a beard and the noun 男子 provide direct physical/lexical support. No contradictory evidence exists. The candidate's assessment is accurate."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 2,
+    "item_attempts": 1
   },
   "丈夫": {
     "character_name": "丈夫",
     "gender": "male",
-    "confidence": 1.0,
-    "evidence": "Primary: The term \"丈夫\" (husband) is inherently male in Chinese. In the novel, it appears twice: line 605 describes \"稍有年纪的丈夫\" (a somewhat older husband) as part of a couple, and line 742 has 赫萝 referring to \"咱的丈夫\" (my husband), which refers to the male protagonist 罗伦斯. Both usages confirm the character is male. | Review: Line 605 explicitly pairs \"丈夫\" (husband) with \"妻子\" (wife) in the phrase \"稍有年纪的丈夫\" (a somewhat older husband), confirming the male role in a marital relationship. Line 742 has 赫萝 referring to \"咱的丈夫\" (my husband) in relation to 罗伦斯, who is established as male throughout the text. The Chinese term \"丈夫\" is inherently male, meaning \"husband.\"",
+    "confidence": 0.99,
+    "evidence": "Primary: Line 605 explicitly narrates \"稍有年纪的丈夫\" (a somewhat older husband) welcoming Lawrence into conversation. Lines 610, 612, 619, 620, 623 repeatedly refer to him as \"男子\" (a man), and line 621 confirms he is the husband with \"因为妻子有些累了\" (my wife is tired). The dialogue at lines 601-621 belongs to this male character. | Review: Line 605 explicitly narrates the character as \"稍有年纪的丈夫\" (a somewhat older husband) who welcomes Lawrence into the conversation. Line 610 again describes him as \"稍有年纪的男子\" (a somewhat older man), directly gendering him as male. Line 621 has this same speaker state \"因为妻子有些累了\" (because my wife is tired), confirming his role as the husband in the couple. The dialogue at lines 606-621 is attributed to this husband figure, and no text anywhere refers to him as female.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "丈夫",
+        "gender": "male",
+        "confidence": 0.99,
+        "evidence": "Line 605 explicitly narrates \"稍有年纪的丈夫\" (a somewhat older husband) welcoming Lawrence into conversation. Lines 610, 612, 619, 620, 623 repeatedly refer to him as \"男子\" (a man), and line 621 confirms he is the husband with \"因为妻子有些累了\" (my wife is tired). The dialogue at lines 601-621 belongs to this male character."
+      },
       "review": {
         "character_name": "丈夫",
         "gender": "male",
-        "confidence": 1.0,
-        "evidence": "Line 605 explicitly pairs \"丈夫\" (husband) with \"妻子\" (wife) in the phrase \"稍有年纪的丈夫\" (a somewhat older husband), confirming the male role in a marital relationship. Line 742 has 赫萝 referring to \"咱的丈夫\" (my husband) in relation to 罗伦斯, who is established as male throughout the text. The Chinese term \"丈夫\" is inherently male, meaning \"husband.\"",
-        "reasoning_summary": "The evidence is conclusive: the term \"丈夫\" is linguistically male (meaning husband), appears in explicit marital context paired with \"妻子\" (wife) in line 605, and is used by 赫萝 to refer to the male protagonist 罗伦斯 in line 742. No contradictory evidence exists."
+        "confidence": 0.99,
+        "evidence": "Line 605 explicitly narrates the character as \"稍有年纪的丈夫\" (a somewhat older husband) who welcomes Lawrence into the conversation. Line 610 again describes him as \"稍有年纪的男子\" (a somewhat older man), directly gendering him as male. Line 621 has this same speaker state \"因为妻子有些累了\" (because my wife is tired), confirming his role as the husband in the couple. The dialogue at lines 606-621 is attributed to this husband figure, and no text anywhere refers to him as female.",
+        "reasoning_summary": "The character 丈夫 (husband) is explicitly gendered male in the narration through the terms 丈夫 (husband, line 605) and 男子 (man, line 610), and he self-identifies as the husband by referring to his 妻子 (wife) in line 621. The candidate's decision matches the explicit textual evidence. Confidence is very high (0.99) because gender is directly stated rather than inferred from names."
       },
       "agreement": true
     },
-    "agent_calls": 4
+    "agent_calls": 3,
+    "item_attempts": 1
   },
   "店老板": {
     "character_name": "店老板",
     "gender": "unknown",
-    "confidence": 1.0,
-    "evidence": "Primary: The character \"店老板\" (shop owner) appears in multiple scenes (lines 1162-1169, 1661-1678, 1695, 1760) but is never referred to with explicit gender pronouns (他/她) in the narration. The character is only identified by the title \"店老板\" throughout. No physical descriptions, self-identification, or kinship titles that would indicate gender are provided. Dialogue style and personality (friendly, conversational) are not valid gender evidence per the instructions. | Review: The character \\\"店老板\\\" (shop owner) is referenced in multiple scenes (lines 1162-1169, 1661-1678, 1695, 1760). In all instances, the character is identified solely by the title \\\"店老板\\\". The narration never uses gendered pronouns (他/她) to refer to this character. There are no physical descriptions, self-identifications, or kinship terms that would indicate gender. While a female staff member (女店员) is mentioned in the first scene (line 1166), she is distinct from the shop owner (line 1169 states the owner is out). The dialogue and actions (laughing, serving) are not sufficient to determine gender.",
+    "confidence": 0.075,
+    "evidence": "Primary: Primary agent did not produce a valid result: No final submission | Review: All 11 occurrences of 店老板 provide no explicit gender marker. In the first scene (lines 1162-1169), the shop owner is absent (\"店老板正好外出采买东西\"), and the person spoken to is a clearly separate female clerk (女店员). In the second scene (lines 1658-1678), the shop owner is present and speaks (\"宿醉啊？\", \"哇哈哈\"), but the narration never attaches a gendered pronoun (他/她) to the shop owner; line 1760's \"他\" refers to Lawrence, not the shop owner. The cheerful \"哇哈哈\" laughter is not explicit evidence of gender.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "店老板",
+        "gender": "unknown",
+        "confidence": 0.0,
+        "evidence": "Primary agent did not produce a valid result: No final submission"
+      },
       "review": {
         "character_name": "店老板",
         "gender": "unknown",
-        "confidence": 1.0,
-        "evidence": "The character \\\"店老板\\\" (shop owner) is referenced in multiple scenes (lines 1162-1169, 1661-1678, 1695, 1760). In all instances, the character is identified solely by the title \\\"店老板\\\". The narration never uses gendered pronouns (他/她) to refer to this character. There are no physical descriptions, self-identifications, or kinship terms that would indicate gender. While a female staff member (女店员) is mentioned in the first scene (line 1166), she is distinct from the shop owner (line 1169 states the owner is out). The dialogue and actions (laughing, serving) are not sufficient to determine gender.",
-        "reasoning_summary": "The text consistently refers to the character only by the title \\\"店老板\\\". There are no explicit gender pronouns, physical descriptions, or kinship titles provided in the narration or dialogue that would allow for a gender determination. The absence of such evidence across all provided contexts confirms the gender is unknown."
+        "confidence": 0.15,
+        "evidence": "All 11 occurrences of 店老板 provide no explicit gender marker. In the first scene (lines 1162-1169), the shop owner is absent (\"店老板正好外出采买东西\"), and the person spoken to is a clearly separate female clerk (女店员). In the second scene (lines 1658-1678), the shop owner is present and speaks (\"宿醉啊？\", \"哇哈哈\"), but the narration never attaches a gendered pronoun (他/她) to the shop owner; line 1760's \"他\" refers to Lawrence, not the shop owner. The cheerful \"哇哈哈\" laughter is not explicit evidence of gender.",
+        "reasoning_summary": "I examined every occurrence of 店老板 in the source packet. No text assigns the character a gender: the character is described as absent in one scene and as a speaking bar-counter figure in another, but never with gendered pronouns or gendered descriptors. The female clerk (女店员) is a distinct character, so her femininity does not transfer to the shop owner. The candidate's decision of \"unknown\" is therefore correct, though the rationale (no valid primary result) differs from this independent review, which finds genuine absence of explicit textual evidence. Confidence is very low because no gender-supporting signal exists at all."
       },
       "agreement": true
     },
-    "agent_calls": 6
+    "agent_calls": 9,
+    "item_attempts": 1
   },
   "大汉": {
     "character_name": "大汉",
     "gender": "male",
     "confidence": 1.0,
-    "evidence": "Primary: Line 1011: \"映入眼帘的是一名肤色晒得黝黑、身体冒着热气的彪形大汉\" and \"他是战士吗？\" (uses male pronoun 他). Line 1015: \"男子从正面抱住马儿\" (explicitly refers to him as 男子, meaning man). | Review: Line 1011: \"映入眼帘的是一名肤色晒得黝黑、身体冒着热气的彪形大汉\" (explicitly uses \"大汉\" meaning big man) and \"他是战士吗？\" (uses male pronoun 他). Line 1015: \"男子从正面抱住马儿\" (explicitly refers to him as 男子, meaning man).",
+    "evidence": "Primary: Explicit narration at line 1011 describes the character as a 「彪形大汉」 with masculine pronoun 他 (赫萝: 「他是战士吗？」), and lines 1013-1015 repeatedly refer to him as 「男子」 (a man). The character is unambiguously male per narration. | Review: Line 1011 explicitly narrates the character as 「彪形大汉」 (a burly/strong big man) and 「这名大汉」, with 赫萝's line 「他是战士吗？」 using the male pronoun 他. Lines 1013–1015 repeatedly refer to the character as 「男子」 (a man). The Chinese nouns 大汉 and 男子 are unambiguous male terms with no contradictory evidence.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "大汉",
+        "gender": "male",
+        "confidence": 1.0,
+        "evidence": "Explicit narration at line 1011 describes the character as a 「彪形大汉」 with masculine pronoun 他 (赫萝: 「他是战士吗？」), and lines 1013-1015 repeatedly refer to him as 「男子」 (a man). The character is unambiguously male per narration."
+      },
       "review": {
         "character_name": "大汉",
         "gender": "male",
         "confidence": 1.0,
-        "evidence": "Line 1011: \"映入眼帘的是一名肤色晒得黝黑、身体冒着热气的彪形大汉\" (explicitly uses \"大汉\" meaning big man) and \"他是战士吗？\" (uses male pronoun 他). Line 1015: \"男子从正面抱住马儿\" (explicitly refers to him as 男子, meaning man).",
-        "reasoning_summary": "The character is explicitly identified as male through multiple clear textual references: the term \"大汉\" itself means \"big man\" or \"burly man\", the text uses the male pronoun \"他\" when referring to this character, and explicitly calls him \"男子\" (man). There is no ambiguity in the gender identification."
+        "evidence": "Line 1011 explicitly narrates the character as 「彪形大汉」 (a burly/strong big man) and 「这名大汉」, with 赫萝's line 「他是战士吗？」 using the male pronoun 他. Lines 1013–1015 repeatedly refer to the character as 「男子」 (a man). The Chinese nouns 大汉 and 男子 are unambiguous male terms with no contradictory evidence.",
+        "reasoning_summary": "The character is explicitly designated male through gendered nouns (大汉, 男子) and the male pronoun 他 in direct narration and dialogue. There is no textual evidence suggesting any other gender, so the male classification is fully supported."
       },
       "agreement": true
     },
-    "agent_calls": 4
+    "agent_calls": 3,
+    "item_attempts": 1
   },
   "女店员": {
     "character_name": "女店员",
     "gender": "female",
     "confidence": 1.0,
-    "evidence": "Primary: The character is explicitly named \"女店员\" (female shop assistant) throughout the text, with the gender indicator \"女\" (female) in the name itself. Multiple references confirm this: line 1132 \"女店员满脸笑容回应\", line 1166 \"向正好送来追加的葡萄酒、腌鲱鱼以及熏羊肉的女店员问\", line 1168 \"女店员纤细的手臂\", line 1172 \"本来就相当开朗的女店员\", line 1181 \"女店员向罗伦斯点头示意\", line 1185 Hector refers to her as \"那个女孩\" (that girl), line 1186 \"等待女店员走进厨房\", line 1192 \"女店员会说那样的谎\", line 1194 \"不明白女店员为何要说谎\", line 1195 \"罗伦斯并不在意女店员的谎言\", line 1548 \"告诉女店员他们想与杰廉联络\". The character name itself contains explicit gender identification, and physical descriptions like \"纤细的手臂\" (slender arms) further confirm female gender. | Review: The character is explicitly named \"女店员\" (female shop assistant) throughout the text, with the gender indicator \"女\" (female) in the name itself. Multiple references confirm this: line 1132 \"女店员满脸笑容回应\", line 1166 \"向正好送来追加的葡萄酒、腌鲱鱼以及熏羊肉的女店员问\", line 1168 \"女店员纤细的手臂\", line 1172 \"本来就相当开朗的女店员\", line 1181 \"女店员向罗伦斯点头示意\", line 1185 Hector refers to her as \"那个女孩\" (that girl), line 1186 \"等待女店员走进厨房\", line 1192 \"女店员会说那样的谎\", line 1194 \"不明白女店员为何要说谎\", line 1195 \"罗伦斯并不在意女店员的谎言\", line 1548 \"告诉女店员他们想与杰廉联络\". The character name itself contains explicit gender identification, and physical descriptions like \"纤细的手臂\" (slender arms) further confirm female gender.",
+    "evidence": "Primary: Explicit narration supports female throughout. The character name 女店员 itself carries the explicit gender marker 女 (female). Line 1168: 「女店员纤细的手臂不知哪来的力气，她轻松地把端来的酒及料理放在桌子上」 uses the explicit pronoun 她 (she) and a physical description. Line 1132 uses 女店员 as narration. Line 1178 narration calls her 「这女孩挺有生意头脑」(this girl), and line 1185 「那个女孩在撒谎」 refers to the same clerk. Line 1192: 「女店员会说那样的谎，就代表着她随时能够与杰廉取得联系」 again uses 她. Multiple explicit pronouns and the \"girl\" descriptor confirm female. | Review: The character's narration designation 女店员 explicitly contains the gender marker 女 (female). Line 1168 narration: 「女店员纤细的手臂不知哪来的力气，她轻松地把端来的酒及料理放在桌子上」 uses the explicit female pronoun 她 (she). Line 1192: 「女店员会说那样的谎，就代表着她随时能够与杰廉取得联系」 also uses 她. The clerk is additionally referred to with female descriptors: line 1178 「这女孩挺有生意头脑」 (this girl) and line 1185 「那个女孩在撒谎」 (that girl), both narration referring to the same clerk. Multiple explicit pronouns and descriptors in narration confirm female.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "女店员",
+        "gender": "female",
+        "confidence": 1.0,
+        "evidence": "Explicit narration supports female throughout. The character name 女店员 itself carries the explicit gender marker 女 (female). Line 1168: 「女店员纤细的手臂不知哪来的力气，她轻松地把端来的酒及料理放在桌子上」 uses the explicit pronoun 她 (she) and a physical description. Line 1132 uses 女店员 as narration. Line 1178 narration calls her 「这女孩挺有生意头脑」(this girl), and line 1185 「那个女孩在撒谎」 refers to the same clerk. Line 1192: 「女店员会说那样的谎，就代表着她随时能够与杰廉取得联系」 again uses 她. Multiple explicit pronouns and the \"girl\" descriptor confirm female."
+      },
       "review": {
         "character_name": "女店员",
         "gender": "female",
         "confidence": 1.0,
-        "evidence": "The character is explicitly named \"女店员\" (female shop assistant) throughout the text, with the gender indicator \"女\" (female) in the name itself. Multiple references confirm this: line 1132 \"女店员满脸笑容回应\", line 1166 \"向正好送来追加的葡萄酒、腌鲱鱼以及熏羊肉的女店员问\", line 1168 \"女店员纤细的手臂\", line 1172 \"本来就相当开朗的女店员\", line 1181 \"女店员向罗伦斯点头示意\", line 1185 Hector refers to her as \"那个女孩\" (that girl), line 1186 \"等待女店员走进厨房\", line 1192 \"女店员会说那样的谎\", line 1194 \"不明白女店员为何要说谎\", line 1195 \"罗伦斯并不在意女店员的谎言\", line 1548 \"告诉女店员他们想与杰廉联络\". The character name itself contains explicit gender identification, and physical descriptions like \"纤细的手臂\" (slender arms) further confirm female gender.",
-        "reasoning_summary": "The character is consistently and explicitly referred to as \"女店员\" (female shop assistant) throughout the text. The Chinese character \"女\" in the name literally means \"female\" or \"woman,\" providing direct gender identification. This is reinforced by additional references such as \"那个女孩\" (that girl) and physical descriptions like \"纤细的手臂\" (slender arms). The evidence is unambiguous and consistent across all occurrences, supporting a female gender classification with high confidence."
+        "evidence": "The character's narration designation 女店员 explicitly contains the gender marker 女 (female). Line 1168 narration: 「女店员纤细的手臂不知哪来的力气，她轻松地把端来的酒及料理放在桌子上」 uses the explicit female pronoun 她 (she). Line 1192: 「女店员会说那样的谎，就代表着她随时能够与杰廉取得联系」 also uses 她. The clerk is additionally referred to with female descriptors: line 1178 「这女孩挺有生意头脑」 (this girl) and line 1185 「那个女孩在撒谎」 (that girl), both narration referring to the same clerk. Multiple explicit pronouns and descriptors in narration confirm female.",
+        "reasoning_summary": "The independent review confirms the candidate's decision. Gender is established by explicit textual markers rather than inference: the character label 女店员 includes 女, narration repeatedly uses the female pronoun 她 for this character (lines 1168, 1192), and narration calls her 女孩 (girl) in lines 1178 and 1185. All references consistently indicate female. No contradictory evidence exists."
       },
       "agreement": true
     },
-    "agent_calls": 2
+    "agent_calls": 3,
+    "item_attempts": 1
   },
   "马夫": {
     "character_name": "马夫",
     "gender": "unknown",
-    "confidence": 1.0,
-    "evidence": "Primary: The character \"马夫\" (coachman/driver) appears in 7 occurrences (lines 2274, 2275, 2383, 2388, 2459, 2465, 2474) and has 4 dialogue samples (lines 2460, 2463, 2466, 2470). The text consistently refers to this character only by the occupation title \"马夫\" without any explicit gender pronouns, gender-specific physical descriptions, or self-identification. The character is described performing actions (sitting on driver's seat, knocking on walls, scolding, listening, jumping off carriage, smiling, entering carriage) but none of these provide gender evidence. Occupation and stereotypes are explicitly excluded as gender evidence per the instructions. | Review: The character \\\"马夫\\\" (coachman/driver) appears in 7 occurrences (lines 2274, 2275, 2383, 2388, 2459, 2465, 2474) and has 4 dialogue samples (lines 2460, 2463, 2466, 2470). The text consistently refers to this character only by the occupation title \\\"马夫\\\" without any explicit gender pronouns, gender-specific physical descriptions, or self-identification. The character is described performing actions (sitting on driver's seat, knocking on walls, scolding, listening, jumping off carriage, smiling, entering carriage) but none of these provide gender evidence. Occupation and stereotypes are explicitly excluded as gender evidence per the instructions.",
+    "confidence": 0.075,
+    "evidence": "Primary: Primary agent did not produce a valid result: No final submission | Review: All references to the character are by the occupation term \"马夫\" (coachman). The speaker-labelled dialogue (lines 2460, 2463, 2466, 2470) uses polite, gender-neutral forms (\"您们\", \"我\") with no gendered first-person or address terms. Narration (lines 2274, 2275, 2383, 2388, 2459, 2465, 2474) describes actions only (敲打墙壁, 怒骂, 侧耳, 跳下马车, 露出苦笑, 进到车厢内) with no gendered description or pronouns. No explicit textual evidence indicates the character's gender.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "马夫",
+        "gender": "unknown",
+        "confidence": 0.0,
+        "evidence": "Primary agent did not produce a valid result: No final submission"
+      },
       "review": {
         "character_name": "马夫",
         "gender": "unknown",
-        "confidence": 1.0,
-        "evidence": "The character \\\"马夫\\\" (coachman/driver) appears in 7 occurrences (lines 2274, 2275, 2383, 2388, 2459, 2465, 2474) and has 4 dialogue samples (lines 2460, 2463, 2466, 2470). The text consistently refers to this character only by the occupation title \\\"马夫\\\" without any explicit gender pronouns, gender-specific physical descriptions, or self-identification. The character is described performing actions (sitting on driver's seat, knocking on walls, scolding, listening, jumping off carriage, smiling, entering carriage) but none of these provide gender evidence. Occupation and stereotypes are explicitly excluded as gender evidence per the instructions.",
-        "reasoning_summary": "No explicit gender indicators found in any of the 7 occurrences or 4 dialogue samples. Character is only identified by occupation title \\\"马夫\\\" with no gender pronouns, physical descriptions, or self-identification. Actions described are gender-neutral. Occupation-based inference is explicitly excluded per instructions."
+        "confidence": 0.15,
+        "evidence": "All references to the character are by the occupation term \"马夫\" (coachman). The speaker-labelled dialogue (lines 2460, 2463, 2466, 2470) uses polite, gender-neutral forms (\"您们\", \"我\") with no gendered first-person or address terms. Narration (lines 2274, 2275, 2383, 2388, 2459, 2465, 2474) describes actions only (敲打墙壁, 怒骂, 侧耳, 跳下马车, 露出苦笑, 进到车厢内) with no gendered description or pronouns. No explicit textual evidence indicates the character's gender.",
+        "reasoning_summary": "The source packet contains no explicit gender markers for 马夫. The character's dialogue is respectful and gender-neutral; the narration never uses gendered pronouns or descriptions. The character name \"马夫\" contains the morpheme 夫, which carries a masculine connotation in Chinese, but inferring male from this would be unsupported name-based inference, which the review instructions prohibit. The speech content (e.g., wishing to return to being a traveling merchant, jesting about a companion on the driver's seat) does not reveal gender. Evidence is insufficient, so the verdict is unknown, with low confidence reflecting the absence of explicit textual support."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 11,
+    "item_attempts": 1
   },
   "店员": {
     "character_name": "店员",
     "gender": "male",
-    "confidence": 0.875,
-    "evidence": "Primary: Line 1011 explicitly refers to the clerk who greeted Lawrence at the entrance as \"男子\" (man): \"看来，搬运货物的货场再怎么也不可能雇用像在门口与罗伦斯搭腔的男子。\" Additionally, line 1005 describes the clerk as having \"胡须剃得干净\" (clean-shaven beard), which is a male physical characteristic. The speaker-labelled dialogue samples (lines 1004, 1007) are from this same clerk at 米隆商行. | Review: Line 1011 explicitly refers to the clerk who greeted Lawrence at the entrance as \"男子\" (man): \"看来，搬运货物的货场再怎么也不可能雇用像在门口与罗伦斯搭腔的男子。\" Additionally, line 1005 describes the clerk as having \"胡须剃得干净\" (clean-shaven beard), which is a male physical characteristic. The speaker-labelled dialogue samples (lines 1004, 1007) are from this same clerk at 米隆商行.",
+    "confidence": 0.935,
+    "evidence": "Primary: Explicit narration at line 1005 describes the unloading-yard clerk (the speaker at lines 1004/1007) as having his beard shaved clean (\"负责管理卸货场的店员胡须剃得干净\"), an unambiguous male physical attribute. Additionally, line 1011 refers to the man who greeted Lawrence at the gate as \"男子\" (a man). | Review: Explicit textual evidence establishes the clerk as male. Line 1005: \"负责管理卸货场的店员胡须剃得干净\" — the unloading-yard clerk (the character who greets Lawrence at lines 1003-1004 and speaks at lines 1004/1007) is described as having his beard shaved clean, an unambiguous male physical attribute. Additionally, line 1011 refers to \"在门口与罗伦斯搭腔的男子\" (the man who spoke with Lawrence at the gate), i.e., this same clerk, using the male term 男子.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "店员",
+        "gender": "male",
+        "confidence": 0.92,
+        "evidence": "Explicit narration at line 1005 describes the unloading-yard clerk (the speaker at lines 1004/1007) as having his beard shaved clean (\"负责管理卸货场的店员胡须剃得干净\"), an unambiguous male physical attribute. Additionally, line 1011 refers to the man who greeted Lawrence at the gate as \"男子\" (a man)."
+      },
       "review": {
         "character_name": "店员",
         "gender": "male",
-        "confidence": 0.9,
-        "evidence": "Line 1011 explicitly refers to the clerk who greeted Lawrence at the entrance as \"男子\" (man): \"看来，搬运货物的货场再怎么也不可能雇用像在门口与罗伦斯搭腔的男子。\" Additionally, line 1005 describes the clerk as having \"胡须剃得干净\" (clean-shaven beard), which is a male physical characteristic. The speaker-labelled dialogue samples (lines 1004, 1007) are from this same clerk at 米隆商行.",
-        "reasoning_summary": "The evidence is explicit and unambiguous. Line 1011 directly identifies the clerk as \"男子\" (man), and line 1005 provides physical confirmation with \"胡须剃得干净\" (clean-shaven beard). The dialogue samples from lines 1004 and 1007 are attributed to this same clerk. There are no contradictions in the text. The gender classification is well-supported by direct textual evidence."
+        "confidence": 0.95,
+        "evidence": "Explicit textual evidence establishes the clerk as male. Line 1005: \"负责管理卸货场的店员胡须剃得干净\" — the unloading-yard clerk (the character who greets Lawrence at lines 1003-1004 and speaks at lines 1004/1007) is described as having his beard shaved clean, an unambiguous male physical attribute. Additionally, line 1011 refers to \"在门口与罗伦斯搭腔的男子\" (the man who spoke with Lawrence at the gate), i.e., this same clerk, using the male term 男子.",
+        "reasoning_summary": "The character 店员 in this context is the unloading-yard clerk of Milon Trading Company who greets Lawrence and delivers the quoted lines 1004 and 1007. The narration explicitly gives him a beard (shaved clean, line 1005) and later calls him a 男子 (man, line 1011). Both are direct, non-inferential markers of male gender. No contradictory evidence exists for this specific character (the female clerks at the bar are a different character, 女店员, not 店员). Therefore, male is confirmed with high confidence."
       },
       "agreement": true
     },
-    "agent_calls": 4
+    "agent_calls": 6,
+    "item_attempts": 1
   },
   "暗号": {
     "character_name": "暗号",
     "gender": "unknown",
-    "confidence": 1.0,
-    "evidence": "Primary: \"暗号\" is not a character name but a common noun meaning \"code\" or \"password\" in Chinese. All 4 occurrences in the novel (lines 2260, 2272, 2317, 2603) refer to secret codes used by trading companies (米隆商行 and 梅迪欧商行), not a person. The speaker-labelled dialogue samples show the actual code words \"里昂\" and \"奴马\" being used, not a character named \"暗号\". There is no character with this name in the novel. | Review: All 4 occurrences of \"暗号\" in the text (lines 2260, 2272, 2317, 2603) clearly refer to secret codes/passwords used by trading companies (米隆商行 and 梅迪欧商行), not a character name. Line 2260 states \"暗号是皮里昂、奴马\" (the code is \"皮里昂\" and \"奴马\"), line 2272 mentions \"米隆商行似乎挺喜欢使用这类暗号\" (Milon Trading Company seems to like using this kind of code), line 2317 shows \"以「里昂」、「奴马」的暗号确认身分后\" (after confirming identity with the codes \"里昂\" and \"奴马\"), and line 2603 describes \"并用他们特有的暗号交谈\" (communicating using their special codes). The speaker-labelled dialogue samples confirm the actual code words \"里昂\" and \"奴马\" are used, not a character named \"暗号\". There is no character with this name in the novel.",
+    "confidence": 0.95,
+    "evidence": "Primary: All 4 occurrences of 暗号 refer to code words/passwords, not a person: line 2260 \"暗号是皮里昂、奴马\", line 2272 \"米隆商行似乎挺喜欢使用这类暗号\", line 2317 \"以「里昂」、「奴马」的暗号确认身分\", line 2603 \"用他们特有的暗号交谈\". The character's only assigned dialogue is the code words 里昂/奴马 at line 2317. No pronouns, kinship terms, titles, or physical descriptions identify a person named 暗号; the text provides no male or female evidence. | Review: All 4 occurrences of 暗号 denote code words/passwords, not a person: line 2260 \"暗号是皮里昂、奴马\"; line 2272 \"米隆商行似乎挺喜欢使用这类暗号\"; line 2317 \"以「里昂」、「奴马」的暗号确认身分\"; line 2603 \"用他们特有的暗号交谈\". The \"speaker-labelled\" dialogue at line 2317 (\"里昂\", \"奴马\") is merely the code words exchanged during identity confirmation, not speech by a person named 暗号. The surrounding contexts (lines 2255–2322, 2598–2608) contain no pronouns, kinship terms, titles, or physical descriptions referring to a person called 暗号.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "暗号",
+        "gender": "unknown",
+        "confidence": 0.95,
+        "evidence": "All 4 occurrences of 暗号 refer to code words/passwords, not a person: line 2260 \"暗号是皮里昂、奴马\", line 2272 \"米隆商行似乎挺喜欢使用这类暗号\", line 2317 \"以「里昂」、「奴马」的暗号确认身分\", line 2603 \"用他们特有的暗号交谈\". The character's only assigned dialogue is the code words 里昂/奴马 at line 2317. No pronouns, kinship terms, titles, or physical descriptions identify a person named 暗号; the text provides no male or female evidence."
+      },
       "review": {
         "character_name": "暗号",
         "gender": "unknown",
-        "confidence": 1.0,
-        "evidence": "All 4 occurrences of \"暗号\" in the text (lines 2260, 2272, 2317, 2603) clearly refer to secret codes/passwords used by trading companies (米隆商行 and 梅迪欧商行), not a character name. Line 2260 states \"暗号是皮里昂、奴马\" (the code is \"皮里昂\" and \"奴马\"), line 2272 mentions \"米隆商行似乎挺喜欢使用这类暗号\" (Milon Trading Company seems to like using this kind of code), line 2317 shows \"以「里昂」、「奴马」的暗号确认身分后\" (after confirming identity with the codes \"里昂\" and \"奴马\"), and line 2603 describes \"并用他们特有的暗号交谈\" (communicating using their special codes). The speaker-labelled dialogue samples confirm the actual code words \"里昂\" and \"奴马\" are used, not a character named \"暗号\". There is no character with this name in the novel.",
-        "reasoning_summary": "\"暗号\" is a common noun meaning \"code\" or \"password\" in Chinese, not a character name. All textual evidence consistently shows it refers to secret codes used by trading companies for communication and identification. No character with this name exists in the novel."
+        "confidence": 0.95,
+        "evidence": "All 4 occurrences of 暗号 denote code words/passwords, not a person: line 2260 \"暗号是皮里昂、奴马\"; line 2272 \"米隆商行似乎挺喜欢使用这类暗号\"; line 2317 \"以「里昂」、「奴马」的暗号确认身分\"; line 2603 \"用他们特有的暗号交谈\". The \"speaker-labelled\" dialogue at line 2317 (\"里昂\", \"奴马\") is merely the code words exchanged during identity confirmation, not speech by a person named 暗号. The surrounding contexts (lines 2255–2322, 2598–2608) contain no pronouns, kinship terms, titles, or physical descriptions referring to a person called 暗号.",
+        "reasoning_summary": "The text indicates 暗号 is a common noun meaning \"code/password\" in every occurrence; it never refers to a character/person. The dialogue attributed to it is just the code words 里昂/奴马 spoken during identity verification. There is no male or female evidence for any named person, so the gender is unknown. The candidate's decision and evidence accurately reflect the source text."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 3,
+    "item_attempts": 1
   },
   "工匠": {
     "character_name": "工匠",
     "gender": "male",
-    "confidence": 0.9,
-    "evidence": "Primary: Line 1266 explicitly describes the craftsman as \"男子\" (man): \"走在后方看似工匠的男子因此撞上赫萝\" - \"a man who looked like a craftsman bumped into Holo\". This is the only craftsman with dialogue (line 1266: \"小、小心点\"). Other references to \"工匠\" (lines 1165, 1345, 1347, 1351) are generic descriptions without gender specification, but do not contradict the male identification. | Review: Line 1266 explicitly describes the craftsman as \"男子\" (man): \"走在后方看似工匠的男子因此撞上赫萝\" - \"a man who looked like a craftsman bumped into Holo\". This is the only craftsman with dialogue (line 1266: \"小、小心点\"). Other references to \"工匠\" (lines 1165, 1345, 1347, 1351) are generic descriptions without gender specification, but do not contradict the male identification.",
+    "confidence": 0.985,
+    "evidence": "Primary: Line 1266 explicitly narrates the speaking craftsman as male: 「走在后方看似工匠的男子因此撞上赫萝。男子正打算开口骂人时…男子粗线条的脸颊瞬间泛红，他只说了句『小、小心点』后，便离开了。」 The character is referred to as 男子 (man) three times in explicit narration, providing direct gender evidence. | Review: Line 1266 contains explicit narration gendering the craftsman as male: 「走在后方看似工匠的男子因此撞上赫萝。男子正打算开口骂人时…男子粗线条的脸颊瞬间泛红，他只说了句『小、小心点』后，便离开了。」 The character is referred to three times as 男子 (man), and the dialogue sample 「小、小心点」 matches this same scene, confirming the character named 工匠 is this specific individual. Other occurrences (lines 1345/1347) refer generically to 金属工匠 (metal craftsmen) as a profession, not to this character.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "工匠",
+        "gender": "male",
+        "confidence": 0.98,
+        "evidence": "Line 1266 explicitly narrates the speaking craftsman as male: 「走在后方看似工匠的男子因此撞上赫萝。男子正打算开口骂人时…男子粗线条的脸颊瞬间泛红，他只说了句『小、小心点』后，便离开了。」 The character is referred to as 男子 (man) three times in explicit narration, providing direct gender evidence."
+      },
       "review": {
         "character_name": "工匠",
         "gender": "male",
-        "confidence": 0.9,
-        "evidence": "Line 1266 explicitly describes the craftsman as \"男子\" (man): \"走在后方看似工匠的男子因此撞上赫萝\" - \"a man who looked like a craftsman bumped into Holo\". This is the only craftsman with dialogue (line 1266: \"小、小心点\"). Other references to \"工匠\" (lines 1165, 1345, 1347, 1351) are generic descriptions without gender specification, but do not contradict the male identification.",
-        "reasoning_summary": "The candidate decision is correct. Line 1266 provides explicit textual evidence identifying the craftsman as \"男子\" (man). This specific craftsman character has dialogue (\"小、小心点\") and is clearly described as male. Other references to \"工匠\" in the text are generic descriptions of the profession or other craftsmen without gender specification, but none contradict the male identification of this particular character. The confidence level of 0.9 is appropriate given the clear, direct evidence."
+        "confidence": 0.99,
+        "evidence": "Line 1266 contains explicit narration gendering the craftsman as male: 「走在后方看似工匠的男子因此撞上赫萝。男子正打算开口骂人时…男子粗线条的脸颊瞬间泛红，他只说了句『小、小心点』后，便离开了。」 The character is referred to three times as 男子 (man), and the dialogue sample 「小、小心点」 matches this same scene, confirming the character named 工匠 is this specific individual. Other occurrences (lines 1345/1347) refer generically to 金属工匠 (metal craftsmen) as a profession, not to this character.",
+        "reasoning_summary": "The character 工匠 corresponds to the craftsman at line 1266, who is explicitly narrated as 男子 (man) three times. This is direct textual gender evidence, not name-based inference. The speaker dialogue 「小、小心点」 is uniquely tied to this male craftsman in the scene. The remaining contexts (1160-1170, 1340-1356) refer to tavern owners, money changers, and metal craftsmen collectively, none of which conflict. Independent verification confirms the candidate's male decision with high confidence."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 3,
+    "item_attempts": 1
   },
   "信件": {
     "character_name": "信件",
     "gender": "unknown",
-    "confidence": 1.0,
-    "evidence": "Primary: \"信件\" is an inanimate object (a letter), not a person. The text describes it as a physical letter delivered by a merchant (lines 2108-2114), containing a message and animal hair (lines 2115-2117). No gender can be assigned to an object. | Review: The text explicitly describes '信件' as a physical letter delivered by a merchant (lines 2108-2114). It is an inanimate object that is received, opened, and read by characters like Lawrence and Mahalt. The letter contains a message and animal hair (lines 2115-2117). There is no indication that '信件' is a person's name - it literally means 'letter' in Chinese. No gender can be assigned to an inanimate object.",
+    "confidence": 0.95,
+    "evidence": "Primary: \"信件\" is the letter delivered to the room (lines 2108–2109) and opened by Lawrence (lines 2113–2114). Line 2117 is merely the text written inside the letter (\"狼在我们手上…\"), not gendered speech by a person. The text provides no pronouns, kinship, titles, or physical descriptions assigning gender to the letter; it is an inanimate object. No evidence supports male or female, so the result is unknown. | Review: The character 信件 is an inanimate object, a letter. Every occurrence (lines 2108, 2109, 2113, 2114) refers to a delivered, handed-over, received, and opened letter — no pronouns, kinship terms, titles, or physical descriptions assign any gender. The line 2117 speech (\"狼在我们手上…\") is quoted text written inside the letter, i.e., the letter's content from an unnamed sender, not gendered speech by the letter itself. No textual evidence supports male or female.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "信件",
+        "gender": "unknown",
+        "confidence": 0.95,
+        "evidence": "\"信件\" is the letter delivered to the room (lines 2108–2109) and opened by Lawrence (lines 2113–2114). Line 2117 is merely the text written inside the letter (\"狼在我们手上…\"), not gendered speech by a person. The text provides no pronouns, kinship, titles, or physical descriptions assigning gender to the letter; it is an inanimate object. No evidence supports male or female, so the result is unknown."
+      },
       "review": {
         "character_name": "信件",
         "gender": "unknown",
-        "confidence": 1.0,
-        "evidence": "The text explicitly describes '信件' as a physical letter delivered by a merchant (lines 2108-2114). It is an inanimate object that is received, opened, and read by characters like Lawrence and Mahalt. The letter contains a message and animal hair (lines 2115-2117). There is no indication that '信件' is a person's name - it literally means 'letter' in Chinese. No gender can be assigned to an inanimate object.",
-        "reasoning_summary": "The character '信件' is an inanimate object (a letter), not a person. The text consistently treats it as a physical item that is delivered, opened, and read. No gender attribution is possible or appropriate for an object."
+        "confidence": 0.95,
+        "evidence": "The character 信件 is an inanimate object, a letter. Every occurrence (lines 2108, 2109, 2113, 2114) refers to a delivered, handed-over, received, and opened letter — no pronouns, kinship terms, titles, or physical descriptions assign any gender. The line 2117 speech (\"狼在我们手上…\") is quoted text written inside the letter, i.e., the letter's content from an unnamed sender, not gendered speech by the letter itself. No textual evidence supports male or female.",
+        "reasoning_summary": "The candidate's decision aligns with the text. 信件 is consistently an object in the narrative (delivered at 2108, having its envelope described at 2109, passed at 2113, torn open at 2114). The only labelled dialogue (2117) is the letter's written contents in an unnamed sender's voice, which does not gender the letter. With zero gender indicators and an explicit inanimate referent, unknown is the correct determination with high confidence."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 4,
+    "item_attempts": 1
   },
   "商行手下": {
     "character_name": "商行手下",
     "gender": "unknown",
-    "confidence": 1.0,
-    "evidence": "Primary: All 6 occurrences of \"商行手下\" (lines 2267, 2665, 2694, 2736, 2740, 2761) use the gender-neutral term \"手下\" (subordinate/hand) without any pronouns, physical descriptions, or gender-indicating language. The character is only referenced as a generic subordinate of the merchant, with no explicit gender information provided in the novel. | Review: All 7 occurrences of \"商行手下\" (lines 2265, 2267, 2665, 2694, 2736, 2740, 2761) use the gender-neutral term \"手下\" (subordinate/hand) without any pronouns, physical descriptions, or gender-indicating language. The character is only referenced as a generic subordinate of the merchant, with no explicit gender information provided in the novel.",
+    "confidence": 0.075,
+    "evidence": "Primary: Primary agent did not produce a valid result: No final submission | Review: The character \"商行手下\" (merchant guild subordinate) appears in all six contexts as a generic role descriptor. Line 2267 describes \"罗伦斯与一同坐进马车的商行手下\" (Lawrence and the merchant guild subordinate riding in the carriage together), and lines 2262/2263/2268/2270/2271 contain this subordinate's dialogue, but no gender markers (pronouns, honorifics, self-reference) appear. Lines 2665, 2694, 2696, 2736, 2740, 2761 reference \"梅迪欧商行手下\" (Medio trading company subordinates) in groups, again without gender specification. The speaker-labelled sample (line 3000: \"行长，有一张这样的请款单。\") also lacks any gender-indicating language.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "商行手下",
+        "gender": "unknown",
+        "confidence": 0.0,
+        "evidence": "Primary agent did not produce a valid result: No final submission"
+      },
       "review": {
         "character_name": "商行手下",
         "gender": "unknown",
-        "confidence": 1.0,
-        "evidence": "All 7 occurrences of \"商行手下\" (lines 2265, 2267, 2665, 2694, 2736, 2740, 2761) use the gender-neutral term \"手下\" (subordinate/hand) without any pronouns, physical descriptions, or gender-indicating language. The character is only referenced as a generic subordinate of the merchant, with no explicit gender information provided in the novel.",
-        "reasoning_summary": "The candidate decision is correct. All occurrences of \"商行手下\" use the gender-neutral term \"手下\" without any gender-specific pronouns, physical descriptions, or other gender-indicating language. The character is consistently referenced only as a generic subordinate of the merchant house, with no explicit gender information provided in the text."
+        "confidence": 0.15,
+        "evidence": "The character \"商行手下\" (merchant guild subordinate) appears in all six contexts as a generic role descriptor. Line 2267 describes \"罗伦斯与一同坐进马车的商行手下\" (Lawrence and the merchant guild subordinate riding in the carriage together), and lines 2262/2263/2268/2270/2271 contain this subordinate's dialogue, but no gender markers (pronouns, honorifics, self-reference) appear. Lines 2665, 2694, 2696, 2736, 2740, 2761 reference \"梅迪欧商行手下\" (Medio trading company subordinates) in groups, again without gender specification. The speaker-labelled sample (line 3000: \"行长，有一张这样的请款单。\") also lacks any gender-indicating language.",
+        "reasoning_summary": "All six occurrences and the dialogue sample describe \"商行手下\" only by role. No explicit textual evidence (pronouns, titles, self-referential terms, or descriptions) establishes the gender of this character or group. While period/novel conventions might suggest male underlings, that would be unsupported name/role-based inference, which the review instructions prohibit. The candidate's \"unknown\" verdict is consistent with the evidence, though the candidate's rationale (no final submission from the primary agent) is procedural rather than evidentiary. Given the complete absence of gender markers in the packet, \"unknown\" is the correct independent determination."
       },
       "agreement": true
     },
-    "agent_calls": 3
+    "agent_calls": 9,
+    "item_attempts": 1
   },
   "商行员工": {
     "character_name": "商行员工",
     "gender": "unknown",
-    "confidence": 1.0,
-    "evidence": "Primary: The character \"商行员工\" appears only once in the novel at line 3022, giving directions: \"啊，呃，这个走廊走到底左转，然后一直往前走就是了。\" This dialogue contains no gender indicators - no pronouns, self-identification, physical descriptions, kinship terms, or titles. No other occurrences of this character exist in the text. | Review: The character \"商行员工\" (bank employee) appears only once in the novel at line 3022, providing directions: \"啊，呃，这个走廊走到底左转，然后一直往前走就是了。\" This dialogue contains no gender indicators - no pronouns, self-identification, physical descriptions, kinship terms, or titles. The character is identified solely by their occupational role rather than a personal name, and no other occurrences exist in the text.",
+    "confidence": 0.925,
+    "evidence": "Primary: The character has a single dialogue (line 3022) answering directions about the loading dock. Surrounding narration (lines 3000-3020) refers to them only as \"有人\" (someone), \"手下\" (subordinate), and \"商行的人\" (company people) - all gender-neutral. No explicit pronouns, kinship terms, gendered titles, or physical descriptions establish male or female. Per rules, absence of evidence must return unknown. | Review: The candidate's evidence cites line 3022 as the character's single dialogue (answering directions about a loading dock) and lines 3000-3020 narration referring to them only via gender-neutral terms: \"有人\" (someone), \"手下\" (subordinate), and \"商行的人\" (company people). The source packet confirms no literal name occurrence was found and instructs to return unknown if evidence remains absent. The character name \"商行员工\" itself is a role descriptor (\"company employee\"), providing no gender signal. No explicit pronouns, kinship terms, gendered titles, or physical descriptions appear in the cited evidence. There is no explicit textual basis to assign male or female, so \"unknown\" is the correct determination per the rules.",
     "verification": {
       "reviewed": true,
+      "primary": {
+        "character_name": "商行员工",
+        "gender": "unknown",
+        "confidence": 0.95,
+        "evidence": "The character has a single dialogue (line 3022) answering directions about the loading dock. Surrounding narration (lines 3000-3020) refers to them only as \"有人\" (someone), \"手下\" (subordinate), and \"商行的人\" (company people) - all gender-neutral. No explicit pronouns, kinship terms, gendered titles, or physical descriptions establish male or female. Per rules, absence of evidence must return unknown."
+      },
       "review": {
         "character_name": "商行员工",
         "gender": "unknown",
-        "confidence": 1.0,
-        "evidence": "The character \"商行员工\" (bank employee) appears only once in the novel at line 3022, providing directions: \"啊，呃，这个走廊走到底左转，然后一直往前走就是了。\" This dialogue contains no gender indicators - no pronouns, self-identification, physical descriptions, kinship terms, or titles. The character is identified solely by their occupational role rather than a personal name, and no other occurrences exist in the text.",
-        "reasoning_summary": "The character is referenced only by their job title \"商行员工\" (bank employee) with no personal name provided. The single instance of dialogue contains no gender markers whatsoever. Without any pronouns, physical descriptions, or other identifying information, gender cannot be determined from the available textual evidence."
+        "confidence": 0.9,
+        "evidence": "The candidate's evidence cites line 3022 as the character's single dialogue (answering directions about a loading dock) and lines 3000-3020 narration referring to them only via gender-neutral terms: \"有人\" (someone), \"手下\" (subordinate), and \"商行的人\" (company people). The source packet confirms no literal name occurrence was found and instructs to return unknown if evidence remains absent. The character name \"商行员工\" itself is a role descriptor (\"company employee\"), providing no gender signal. No explicit pronouns, kinship terms, gendered titles, or physical descriptions appear in the cited evidence. There is no explicit textual basis to assign male or female, so \"unknown\" is the correct determination per the rules.",
+        "reasoning_summary": "The candidate correctly applied the rule that absence of explicit gendered evidence must yield \"unknown.\" All cited references are gender-neutral role or generic references (\"someone,\" \"subordinate,\" \"company people\"). The dialogue content (directions about a loading dock) carries no gender marker. The source packet explicitly directs returning unknown when no name occurrence and no evidence exists. The candidate did not engage in name-based inference, and I likewise find no explicit textual evidence supporting a male or female assignment. I concur with the \"unknown\" verdict."
       },
       "agreement": true
     },
-    "agent_calls": 4
+    "agent_calls": 6,
+    "item_attempts": 1
   },
   "旁白": {
     "gender": "unknown",
@@ -426,15 +587,14 @@
     "evidence": "Narration role; gender identification is not applicable."
   },
   "_meta": {
-    "model": "sensenova-6.7-flash-lite",
+    "model": "deepseek-v4-flash",
     "pipeline_version": 2,
     "source_hash": "bbb288108ba67718248ddaa01f673e8cf4bd396a74b60d07cd86e284c07fdf3b",
     "llm_usage": {
-      "calls": 84,
-      "prompt_tokens": 350014,
-      "completion_tokens": 54811,
-      "total_tokens": 404825
-    },
-    "validation_source": "backend/data/issue99_validation/gender_results.json"
+      "calls": 118,
+      "prompt_tokens": 680448,
+      "completion_tokens": 111099,
+      "total_tokens": 791547
+    }
   }
 }

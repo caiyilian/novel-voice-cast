@@ -82,6 +82,3 @@ config/llm_proxy_key
 
 # WorkBuddy workspace memory
 .workbuddy/
-
-# 重构调研文档（含 local apiKey，不提交）
-docs/refactor-research.md
