@@ -1245,15 +1245,17 @@ def get_reference_audio(speaker: str, gender: str, config: dict[str, Any]) -> st
 def get_voice_assignment(speaker: str, gender: str, config: dict[str, Any]) -> dict[str, str]:
     """Select the configured TTS engine and voice for a speaker.
 
-    ``force_all_characters`` makes every line use VoxCPM. Explicit character
+    ``force_all_characters`` makes every line use a cloning engine (CosyVoice 3
+    when ``cosyvoice.enabled`` is true, otherwise VoxCPM). Explicit character
     references still take precedence, while every other speaker uses the
     gender-specific default reference audio.
     """
     speaker = effective_speaker(speaker)
     voxcpm = config.get("voxcpm", {})
+    clone_engine = "cosyvoice" if bool(config.get("cosyvoice", {}).get("enabled", False)) else "voxcpm"
     if bool(voxcpm.get("force_all_characters", False)):
         return {
-            "engine": "voxcpm",
+            "engine": clone_engine,
             "reference_audio": get_reference_audio(speaker, gender, config),
         }
 
@@ -1270,7 +1272,7 @@ def get_voice_assignment(speaker: str, gender: str, config: dict[str, Any]) -> d
         reference = override or config.get("characters", {}).get(speaker)
         if not reference:
             reference = get_reference_audio(speaker, gender, config)
-        return {"engine": "voxcpm", "reference_audio": str(resolve_path(reference))}
+        return {"engine": clone_engine, "reference_audio": str(resolve_path(reference))}
 
     edge_config = config.get("edge_tts", {})
     voice_id = edge_config.get(
@@ -1820,7 +1822,8 @@ def tts_fingerprint(
 ) -> str:
     engine_config: dict[str, Any] = {}
     if config is not None:
-        section = "voxcpm" if assignment.get("engine") == "voxcpm" else "edge_tts"
+        engine = assignment.get("engine", "")
+        section = engine if engine in {"voxcpm", "cosyvoice"} else "edge_tts"
         raw_config = config.get(section, {})
         if isinstance(raw_config, dict):
             if section == "voxcpm":
@@ -1844,7 +1847,7 @@ def tts_fingerprint(
         "engine_config": engine_config,
         "style_control": (
             str((performance_result or {}).get("performance_control", ""))
-            if assignment.get("engine") == "voxcpm"
+            if assignment.get("engine") in {"voxcpm", "cosyvoice"}
             else ""
         ),
         "legacy_emotion": (
@@ -1915,6 +1918,14 @@ def resolve_voxcpm_python(config: dict[str, Any]) -> Path:
     path = resolve_path(configured) if configured else Path(sys.executable).resolve()
     if not path.is_file():
         raise PipelineError(f"VoxCPM Python interpreter not found: {path}")
+    return path
+
+
+def resolve_cosyvoice_python(config: dict[str, Any]) -> Path:
+    configured = config.get("cosyvoice", {}).get("python") or os.environ.get("COSYVOICE_PYTHON")
+    path = resolve_path(configured) if configured else Path(sys.executable).resolve()
+    if not path.is_file():
+        raise PipelineError(f"CosyVoice Python interpreter not found: {path}")
     return path
 
 
@@ -2068,6 +2079,69 @@ def run_voxcpm_tasks(tasks: list[dict[str, Any]], config: dict[str, Any]) -> lis
     return results
 
 
+def valid_cosyvoice_result(result: Any, task: dict[str, Any]) -> bool:
+    if not isinstance(result, dict) or not all(
+        key in task for key in ("index", "fingerprint", "output_path")
+    ):
+        return False
+    if (
+        result.get("status") != "ok"
+        or result.get("index") != task["index"]
+        or result.get("fingerprint") != task["fingerprint"]
+        or result.get("output_path") != task["output_path"]
+    ):
+        return False
+    actual = inspect_generated_wav(Path(task["output_path"]))
+    if not actual or actual["wav_duration_seconds"] < 0.08:
+        return False
+    return all(result.get(key) == value for key, value in actual.items())
+
+
+def run_cosyvoice_tasks(tasks: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
+    if not tasks:
+        return []
+    for task in tasks:
+        reference = Path(task["reference_audio"])
+        if not nonempty_file(reference):
+            raise PipelineError(f"CosyVoice reference audio is missing or empty: {reference}")
+
+    out_dir = output_dir(config)
+    results_path = out_dir / "cosyvoice_results.json"
+    spec_path = out_dir / "_cosyvoice_spec.json"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    cosyvoice = config.get("cosyvoice", {})
+    spec = {
+        "tasks": tasks,
+        "model_path": str(resolve_path(cosyvoice.get("model_path", "backend/models/CosyVoice3-0.5B"))),
+        "results_path": str(results_path),
+        "task_attempts": int(cosyvoice.get("task_attempts", 3)),
+    }
+    spec_path.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+    worker_path = ROOT / "backend" / "cosyvoice_worker.py"
+    try:
+        run_checked_subprocess(
+            [str(resolve_cosyvoice_python(config)), str(worker_path), str(spec_path)],
+            timeout=int(cosyvoice.get("timeout", 604800)),
+        )
+    finally:
+        spec_path.unlink(missing_ok=True)
+
+    checkpoint = read_json(results_path, {})
+    raw_results = checkpoint.get("results", {}) if isinstance(checkpoint, dict) else {}
+    task_by_key = {str(task.get("task_key", task["index"])): task for task in tasks}
+    results = [raw_results.get(key, {}) for key in task_by_key]
+    failures = []
+    for key, item in zip(task_by_key, results):
+        task = task_by_key[key]
+        if not valid_cosyvoice_result(item, task):
+            failures.append(item)
+    if failures or len(results) != len(tasks):
+        detail = failures[:3] or "missing results"
+        raise PipelineError(f"CosyVoice batch failed: {detail}")
+    return results
+
+
 def recover_voxcpm_tasks(
     tasks: list[dict[str, Any]],
     config: dict[str, Any],
@@ -2144,7 +2218,13 @@ def make_tts_task(
         "fingerprint": fingerprint,
         "entry": entry,
     }
-    if assignment["engine"] == "voxcpm":
+    if assignment["engine"] == "cosyvoice":
+        # CosyVoice 3 直接吃自然语言 instruct，不压缩、不拆块（支持长文本 + 流式）。
+        instruct = str(performance.get("performance_control", "")).strip()
+        entry["instruct_text"] = instruct
+        task["reference_audio"] = assignment["reference_audio"]
+        task["instruct_text"] = instruct
+    elif assignment["engine"] == "voxcpm":
         raw_control = str(performance.get("performance_control", "")).strip()
         if not raw_control:
             legacy = build_emotion_prefix(emotion.get("emotion"), emotion.get("tone"))
@@ -2556,6 +2636,7 @@ def step_tts(
     new_entries: dict[str, Any] = {}
     edge_tasks: list[dict[str, Any]] = []
     voxcpm_tasks: list[dict[str, Any]] = []
+    cosyvoice_tasks: list[dict[str, Any]] = []
 
     for index, dialogue in enumerate(dialogues):
         raw_speaker = dialogue.get("speaker", "")
@@ -2570,8 +2651,11 @@ def step_tts(
         if reusable_tts_entry(previous, task):
             new_entries[str(index)] = completed_tts_entry(task)
             continue
-        if task["entry"]["engine"] == "voxcpm":
+        engine = task["entry"]["engine"]
+        if engine == "voxcpm":
             voxcpm_tasks.append(task)
+        elif engine == "cosyvoice":
+            cosyvoice_tasks.append(task)
         else:
             edge_tasks.append(task)
 
@@ -2588,7 +2672,7 @@ def step_tts(
 
     print(
         f"  resume={len(new_entries)}, VoxCPM={len(voxcpm_tasks)}, "
-        f"edge-tts={len(edge_tasks)}"
+        f"CosyVoice={len(cosyvoice_tasks)}, edge-tts={len(edge_tasks)}"
     )
 
     for task in edge_tasks:
@@ -2608,6 +2692,18 @@ def step_tts(
             raise
         successful = {item["index"] for item in results}
         for task in voxcpm_tasks:
+            if task["index"] in successful and nonempty_file(Path(task["output_path"])):
+                new_entries[str(task["index"])] = completed_tts_entry(task)
+        checkpoint()
+
+    if cosyvoice_tasks:
+        try:
+            results = run_cosyvoice_tasks(cosyvoice_tasks, config)
+        except BaseException:
+            checkpoint()
+            raise
+        successful = {item["index"] for item in results}
+        for task in cosyvoice_tasks:
             if task["index"] in successful and nonempty_file(Path(task["output_path"])):
                 new_entries[str(task["index"])] = completed_tts_entry(task)
         checkpoint()
