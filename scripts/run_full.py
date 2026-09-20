@@ -2003,271 +2003,6 @@ def valid_voxcpm_result(result: Any, task: dict[str, Any]) -> bool:
     return all(result.get(key) == value for key, value in actual.items())
 
 
-def create_voxcpm_script(tasks: list[dict[str, Any]], config: dict[str, Any]) -> str:
-    model_path = resolve_path(config.get("voxcpm", {}).get("model_path", "backend/models/VoxCPM2"))
-    module_path = resolve_path(config.get("voxcpm", {}).get("module_path", "backend"))
-    results_path = output_dir(config) / "voxcpm_results.json"
-    tasks_literal = repr(json.dumps(tasks, ensure_ascii=False))
-    batch_source_hash = voxcpm_batch_source_hash(tasks, config)
-    generation_signature = voxcpm_generation_signature(config)
-    options = voxcpm_generation_options(config)
-    cfg_value = options["cfg_value"]
-    inference_timesteps = options["inference_timesteps"]
-    normalize = options["normalize"]
-    reuse_reference_cache = options["reuse_reference_cache"]
-    retry_badcase = options["retry_badcase"]
-    retry_badcase_max_times = options["retry_badcase_max_times"]
-    retry_badcase_ratio_threshold = options["retry_badcase_ratio_threshold"]
-    max_len = options["max_len"]
-    task_attempts = options["task_attempts"]
-    return f'''import hashlib
-import json
-import os
-import re
-import sys
-import time
-
-sys.path.insert(0, {str(module_path)!r})
-try:
-    from models.voxcpm import VoxCPM
-except ImportError:
-    from voxcpm import VoxCPM
-import soundfile as sf
-
-tasks = json.loads({tasks_literal})
-checkpoint_path = {str(results_path)!r}
-checkpoint_version = {VOXCPM_BATCH_CHECKPOINT_VERSION!r}
-source_hash = {batch_source_hash!r}
-generation_signature = {generation_signature!r}
-results = {{}}
-try:
-    with open(checkpoint_path, "r", encoding="utf-8") as handle:
-        prior = json.load(handle)
-    if (
-        prior.get("version") == checkpoint_version
-        and prior.get("generation_signature") == generation_signature
-        and isinstance(prior.get("results"), dict)
-    ):
-        results = prior["results"]
-except (OSError, ValueError, TypeError):
-    pass
-
-def save_checkpoint():
-    payload = {{
-        "version": checkpoint_version,
-        "generation_signature": generation_signature,
-        "source_hash": source_hash,
-        "expected": len(tasks),
-        "completed": sum(
-            1
-            for task in tasks
-            if results.get(str(task.get("task_key", task["index"])), {{}}).get("status") == "ok"
-        ),
-        "results": results,
-    }}
-    temporary = checkpoint_path + f".{{os.getpid()}}.tmp"
-    with open(temporary, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
-    for attempt in range(6):
-        try:
-            os.replace(temporary, checkpoint_path)
-            return
-        except PermissionError:
-            if attempt == 5:
-                raise
-            time.sleep(0.05 * (2 ** attempt))
-
-def file_sha256(path):
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-def inspect_wav(path):
-    info = sf.info(path)
-    if info.frames <= 0 or info.samplerate <= 0 or info.channels <= 0:
-        raise RuntimeError("generated WAV has invalid stream metadata")
-    duration = info.frames / info.samplerate
-    if duration < 0.08:
-        raise RuntimeError(f"generated WAV is implausibly short: {{duration:.3f}}s")
-    return {{
-        "wav_sha256": file_sha256(path),
-        "wav_size": os.path.getsize(path),
-        "wav_frames": int(info.frames),
-        "wav_sample_rate": int(info.samplerate),
-        "wav_channels": int(info.channels),
-        "wav_duration_seconds": round(duration, 6),
-    }}
-
-def valid_result(result, task):
-    if not isinstance(result, dict):
-        return False
-    key = str(task.get("task_key", task["index"]))
-    if (
-        result.get("status") != "ok"
-        or result.get("task_key") != key
-        or result.get("index") != task["index"]
-        or result.get("chunk_index", 0) != task.get("chunk_index", 0)
-        or result.get("fingerprint") != task["fingerprint"]
-        or result.get("output_path") != task["output_path"]
-    ):
-        return False
-    try:
-        actual = inspect_wav(task["output_path"])
-    except Exception:
-        return False
-    return all(result.get(name) == value for name, value in actual.items())
-
-try:
-    model = VoxCPM.from_pretrained({str(model_path)!r}, load_denoiser=False)
-except Exception as exc:
-    results["_model"] = {{"status": "error", "error": f"model load failed: {{exc}}"}}
-    save_checkpoint()
-    raise
-
-prompt_caches = {{}}
-supports_prompt_cache = bool(
-    {reuse_reference_cache!r}
-    and hasattr(model, "tts_model")
-    and hasattr(model.tts_model, "build_prompt_cache")
-    and hasattr(model.tts_model, "generate_with_prompt_cache")
-)
-
-def normalize_text(text):
-    text = re.sub(r"\\s+", " ", str(text).replace("\\n", " ")).strip()
-    if {normalize!r}:
-        if getattr(model, "text_normalizer", None) is None:
-            from voxcpm.utils.text_normalize import TextNormalizer
-            model.text_normalizer = TextNormalizer()
-        text = model.text_normalizer.normalize(text)
-    return text
-
-def generate(task, generation_attempt):
-    variants = task.get("control_variants") or [task.get("style_control", "")]
-    control = str(variants[min(generation_attempt - 1, len(variants) - 1)]).strip()
-    text = str(task["text"]).replace("\\n", " ")
-    final_text = f"({{control}}){{text}}" if control else text
-    if not supports_prompt_cache:
-        wav = model.generate(
-            text=final_text,
-            reference_wav_path=task["reference_audio"],
-            cfg_value={cfg_value!r},
-            inference_timesteps={inference_timesteps!r},
-            normalize={normalize!r},
-            retry_badcase={retry_badcase!r},
-            retry_badcase_max_times={retry_badcase_max_times!r},
-        )
-        return wav, {{"prompt_cache": False, "used_control": control}}
-    reference = task["reference_audio"]
-    if reference not in prompt_caches:
-        prompt_caches[reference] = model.tts_model.build_prompt_cache(reference_wav_path=reference)
-    wav, target_tokens, audio_features = model.tts_model.generate_with_prompt_cache(
-        target_text=normalize_text(final_text),
-        prompt_cache=prompt_caches[reference],
-        cfg_value={cfg_value!r},
-        inference_timesteps={inference_timesteps!r},
-        retry_badcase={retry_badcase!r},
-        retry_badcase_max_times={retry_badcase_max_times!r},
-        retry_badcase_ratio_threshold={retry_badcase_ratio_threshold!r},
-        max_len={max_len!r},
-    )
-    token_count = max(1, int(target_tokens.numel()))
-    feature_count = int(audio_features.shape[0])
-    audio_text_ratio = feature_count / token_count
-    if {retry_badcase!r} and audio_text_ratio >= {retry_badcase_ratio_threshold!r}:
-        raise RuntimeError(
-            f"badcase remained after retries: audio_text_ratio={{audio_text_ratio:.3f}}"
-        )
-    return wav.squeeze(0).cpu().numpy(), {{
-        "prompt_cache": True,
-        "target_token_count": token_count,
-        "audio_feature_count": feature_count,
-        "audio_text_ratio": round(audio_text_ratio, 6),
-        "used_control": control,
-    }}
-
-save_checkpoint()
-for position, task in enumerate(tasks, 1):
-    key = str(task.get("task_key", task["index"]))
-    if valid_result(results.get(key), task):
-        print(
-            f"VoxCPM [{{position}}/{{len(tasks)}}] key={{key}} status=cached",
-            flush=True,
-        )
-        continue
-    last_error = None
-    for generation_attempt in range(1, {task_attempts!r} + 1):
-        temporary_wav = task["output_path"] + f".{{os.getpid()}}.tmp.wav"
-        try:
-            wav, diagnostics = generate(task, generation_attempt)
-            os.makedirs(os.path.dirname(task["output_path"]) or ".", exist_ok=True)
-            sf.write(temporary_wav, wav, model.tts_model.sample_rate)
-            wave_meta = inspect_wav(temporary_wav)
-            duration = wave_meta["wav_duration_seconds"]
-            minimum = float(task.get("min_duration_seconds", 0.0))
-            maximum = float(task.get("max_duration_seconds", float("inf")))
-            if duration < minimum:
-                # Never repair a performance with post-generation time
-                # stretching.  VoxCPM sampling is stochastic, so discard this
-                # take and let the normal attempt loop sample another one.  If
-                # every take is anomalously fast, fail with a resumable
-                # checkpoint instead of silently changing the actor's timing.
-                raise RuntimeError(
-                    "audio is anomalously fast; retrying a fresh VoxCPM take: "
-                    f"{{duration:.3f}}s < {{minimum:.3f}}s"
-                )
-            if duration > maximum:
-                raise RuntimeError(
-                    "audio is too slow or leaked control text: "
-                    f"{{duration:.3f}}s > {{maximum:.3f}}s"
-                )
-            os.replace(temporary_wav, task["output_path"])
-            results[key] = {{
-                "task_key": key,
-                "index": task["index"],
-                "chunk_index": task.get("chunk_index", 0),
-                "status": "ok",
-                "fingerprint": task["fingerprint"],
-                "output_path": task["output_path"],
-                "generation_attempts": generation_attempt,
-                **diagnostics,
-                **wave_meta,
-            }}
-            break
-        except Exception as exc:
-            last_error = exc
-            try:
-                os.unlink(temporary_wav)
-            except FileNotFoundError:
-                pass
-            if generation_attempt < {task_attempts!r}:
-                time.sleep(min(10.0, 1.5 * generation_attempt))
-    if results.get(key, {{}}).get("status") != "ok":
-        results[key] = {{
-            "task_key": key,
-            "index": task["index"],
-            "chunk_index": task.get("chunk_index", 0),
-            "status": "error",
-            "fingerprint": task["fingerprint"],
-            "output_path": task["output_path"],
-            "generation_attempts": {task_attempts!r},
-            "error": str(last_error),
-        }}
-    save_checkpoint()
-    print(
-        f"VoxCPM [{{position}}/{{len(tasks)}}] key={{key}} status={{results[key]['status']}}",
-        flush=True,
-    )
-
-if any(
-    results.get(str(task.get("task_key", task["index"])), {{}}).get("status") != "ok"
-    for task in tasks
-):
-    raise SystemExit(1)
-'''
-
-
 def run_voxcpm_tasks(tasks: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
     if not tasks:
         return []
@@ -2277,17 +2012,38 @@ def run_voxcpm_tasks(tasks: list[dict[str, Any]], config: dict[str, Any]) -> lis
             raise PipelineError(f"VoxCPM reference audio is missing or empty: {reference}")
 
     out_dir = output_dir(config)
-    script_path = out_dir / "_batch_voxcpm.py"
     results_path = out_dir / "voxcpm_results.json"
+    spec_path = out_dir / "_voxcpm_spec.json"
     out_dir.mkdir(parents=True, exist_ok=True)
-    script_path.write_text(create_voxcpm_script(tasks, config), encoding="utf-8")
+
+    options = voxcpm_generation_options(config)
+    spec = {
+        "tasks": tasks,
+        "model_path": str(resolve_path(config.get("voxcpm", {}).get("model_path", "backend/models/VoxCPM2"))),
+        "module_path": str(resolve_path(config.get("voxcpm", {}).get("module_path", "backend"))),
+        "results_path": str(results_path),
+        "checkpoint_version": VOXCPM_BATCH_CHECKPOINT_VERSION,
+        "source_hash": voxcpm_batch_source_hash(tasks, config),
+        "generation_signature": voxcpm_generation_signature(config),
+        "cfg_value": options["cfg_value"],
+        "inference_timesteps": options["inference_timesteps"],
+        "normalize": options["normalize"],
+        "reuse_reference_cache": options["reuse_reference_cache"],
+        "retry_badcase": options["retry_badcase"],
+        "retry_badcase_max_times": options["retry_badcase_max_times"],
+        "retry_badcase_ratio_threshold": options["retry_badcase_ratio_threshold"],
+        "max_len": options["max_len"],
+        "task_attempts": options["task_attempts"],
+    }
+    spec_path.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+    worker_path = ROOT / "backend" / "voxcpm_worker.py"
     try:
         run_checked_subprocess(
-            [str(resolve_voxcpm_python(config)), str(script_path)],
+            [str(resolve_voxcpm_python(config)), str(worker_path), str(spec_path)],
             timeout=int(config.get("voxcpm", {}).get("timeout", 7200)),
         )
     finally:
-        script_path.unlink(missing_ok=True)
+        spec_path.unlink(missing_ok=True)
 
     checkpoint = read_json(results_path, {})
     if not isinstance(checkpoint, dict):

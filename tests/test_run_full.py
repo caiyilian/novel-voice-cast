@@ -912,37 +912,22 @@ def test_performance_style_enters_voxcpm_fingerprint_and_task(tmp_path, monkeypa
     )
 
 
-def test_voxcpm_child_script_compiles_and_reuses_reference_cache(tmp_path):
-    config = make_config(tmp_path)
-    reference_path = tmp_path / "main.wav"
-    tasks = [
-        {
-            "index": index,
-            "text": "line with 'quotes'\nand a newline",
-            "output_path": str(tmp_path / "output" / "segments" / f"{index:05d}.wav"),
-            "fingerprint": f"fingerprint-{index}",
-            "reference_audio": str(reference_path),
-            "style_control": "measured and clear",
-        }
-        for index in range(2)
-    ]
+def test_voxcpm_worker_script_compiles_and_reuses_reference_cache():
+    worker_path = Path(__file__).resolve().parents[1] / "backend" / "voxcpm_worker.py"
+    source = worker_path.read_text(encoding="utf-8")
 
-    script = run_full.create_voxcpm_script(tasks, config)
-
-    compile(script, "_batch_voxcpm.py", "exec")
-    assert "prompt_caches = {}" in script
-    assert "if reference not in prompt_caches:" in script
-    assert "build_prompt_cache(reference_wav_path=reference)" in script
-    assert "prompt_cache=prompt_caches[reference]" in script
-    assert "max_len=4096" in script
-    assert "badcase remained after retries" in script
-    assert "audio is anomalously fast; retrying a fresh VoxCPM take" in script
-    assert "correct_fast_audio" not in script
-    assert "atempo=" not in script
-    assert ".tempo.wav" not in script
-    assert "os.replace(temporary_wav, task[\"output_path\"])" in script
-    assert '"wav_sha256": file_sha256(path)' in script
-    assert "if False:" in script  # normalize defaults off, matching VoxCPM's public API
+    compile(source, str(worker_path), "exec")
+    assert "prompt_caches = {}" in source
+    assert "if reference not in prompt_caches:" in source
+    assert "build_prompt_cache(reference_wav_path=reference)" in source
+    assert "prompt_cache=prompt_caches[reference]" in source
+    assert "badcase remained after retries" in source
+    assert "audio is anomalously fast; retrying a fresh VoxCPM take" in source
+    assert "correct_fast_audio" not in source
+    assert "atempo=" not in source
+    assert ".tempo.wav" not in source
+    assert "os.replace(temporary_wav, task[\"output_path\"])" in source
+    assert "_file_sha256" in source
 
 
 def test_recover_voxcpm_tasks_requires_matching_successful_nonempty_outputs(tmp_path):
