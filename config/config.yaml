@@ -39,7 +39,7 @@ default_audio:
 # 功能开关
 features:
   gender_identify: true        # 自动识别性别
-  emotion_label: true          # 情感标注（旁白跳过）
+  emotion_label: false         # 情感标注（已禁用：情绪统一由 performance 多 Agent 表演指导控制）
   performance_direction: true  # 逐句多 Agent 表演指导（VoxCPM 自然语言控制）
   denoise: false               # 音频去噪
   force_reprocess: false       # 强制重新处理情感标注（忽略已有结果）
