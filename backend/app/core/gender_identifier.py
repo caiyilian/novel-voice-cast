@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.core.llm_client import LLMClient, LLMResult, SENSENOVA_FLASH_LITE_MODEL, ToolCall
+from app.core.novel_index import NovelIndex
 from app.core._shared import (
     assistant_tool_message as _assistant_tool_message,
     atomic_write_json as _atomic_write_json,
@@ -45,101 +46,6 @@ def gender_source_hash(text: str, character_names: list[str], dialogues: Optiona
 
 class GenderBatchError(RuntimeError):
     """A character failed repeatedly; completed characters remain checkpointed."""
-
-
-class NovelIndex:
-    """One reusable novel index with cached evidence packets."""
-
-    def __init__(self, text: str, dialogues: Optional[list[dict]] = None):
-        self.text = text
-        self.lines = text.splitlines()
-        self.dialogues = dialogues or []
-        self._search_cache: dict[tuple[str, int], dict[str, Any]] = {}
-        self._evidence_cache: dict[str, str] = {}
-
-    def search(self, keyword: str, limit: int = 20) -> dict[str, Any]:
-        key = (keyword, limit)
-        if key in self._search_cache:
-            return self._search_cache[key]
-        all_matches = [
-            {"line_number": number, "line": line.strip()[:240]}
-            for number, line in enumerate(self.lines, 1)
-            if keyword and keyword in line
-        ]
-        result = {
-            "total_matches": len(all_matches),
-            "truncated": len(all_matches) > limit,
-            "matches": all_matches[:limit],
-        }
-        self._search_cache[key] = result
-        return result
-
-    def read_lines(self, start: int, end: int, limit: int = 240) -> dict[str, Any]:
-        start = max(1, int(start))
-        end = min(len(self.lines), int(end))
-        if start > end:
-            return {"text": "", "truncated": False}
-        selected = self.lines[start - 1 : end]
-        truncated = len(selected) > limit
-        selected = selected[:limit]
-        return {
-            "text": "\n".join(f"{start + offset}: {line.strip()}" for offset, line in enumerate(selected)),
-            "truncated": truncated,
-        }
-
-    def get_dialogues(self, character_name: str, limit: int = 50) -> list[dict]:
-        matched = []
-        for index, dialogue in enumerate(self.dialogues):
-            if dialogue.get("speaker") == character_name:
-                matched.append(
-                    {
-                        "dialogue_index": index,
-                        "line_number": int(dialogue.get("line", 0)),
-                        "text": str(dialogue.get("text", ""))[:240],
-                    }
-                )
-                if len(matched) >= limit:
-                    break
-        if matched:
-            return matched
-        for number, line in enumerate(self.lines, 1):
-            if character_name in line and ("\u300c" in line or "\u300d" in line):
-                matched.append({"dialogue_index": -1, "line_number": number, "text": line.strip()[:240]})
-                if len(matched) >= limit:
-                    break
-        return matched
-
-    def evidence_packet(self, character_name: str, max_occurrences: int = 12, radius: int = 5) -> str:
-        if character_name in self._evidence_cache:
-            return self._evidence_cache[character_name]
-        matches = self.search(character_name, limit=80)["matches"]
-        if not matches:
-            packet = "No literal name occurrence was found. Use dialogue metadata and return unknown if evidence remains absent."
-            self._evidence_cache[character_name] = packet
-            return packet
-
-        positions = [item["line_number"] for item in matches]
-        if len(positions) > max_occurrences:
-            last = len(positions) - 1
-            chosen = sorted({positions[round(i * last / (max_occurrences - 1))] for i in range(max_occurrences)})
-        else:
-            chosen = positions
-        blocks = []
-        for position in chosen:
-            block = self.read_lines(position - radius, position + radius, limit=radius * 2 + 1)["text"]
-            blocks.append(block)
-        dialogues = self.get_dialogues(character_name, limit=12)
-        dialogue_text = "\n".join(
-            f"line {item['line_number']}: {item['text']}" for item in dialogues
-        ) or "No speaker-labelled dialogue found."
-        packet = (
-            f"Representative name contexts ({len(chosen)} of {len(positions)} occurrences):\n"
-            + "\n---\n".join(blocks)
-            + "\n\nSpeaker-labelled dialogue samples:\n"
-            + dialogue_text
-        )
-        self._evidence_cache[character_name] = packet
-        return packet
 
 
 def _object_schema(properties: dict, required: list[str]) -> dict:

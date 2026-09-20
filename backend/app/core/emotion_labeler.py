@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.core.llm_client import LLMClient, LLMResult, SENSENOVA_FLASH_LITE_MODEL, ToolCall
+from app.core.novel_index import NovelIndex
 from app.core._shared import (
     assistant_tool_message as _assistant_message,
     merge_usage_summaries as _merge_usage_summaries,
@@ -30,52 +31,6 @@ RECENT_MEMORY_SIZE = 5
 
 class EmotionBatchError(RuntimeError):
     """A dialogue remained invalid after retries; the checkpoint is resumable."""
-
-
-class NovelIndex:
-    def __init__(self, text: str, dialogues: Optional[list[dict]] = None):
-        self.lines = text.splitlines()
-        self.dialogues = dialogues or []
-        self.line_to_speakers: dict[int, list[str]] = {}
-        for dialogue in self.dialogues:
-            line = int(dialogue.get("line", 0) or 0)
-            speaker = str(dialogue.get("speaker", "")).strip()
-            if line > 0 and speaker:
-                self.line_to_speakers.setdefault(line, []).append(speaker)
-
-    def _format_line(self, line_number: int, line: str) -> str:
-        speakers = self.line_to_speakers.get(line_number, [])
-        label = f" [speaker: {', '.join(speakers)}]" if speakers else ""
-        return f"{line_number}{label}: {line.strip()}"
-
-    def read_lines(self, start: int, end: int, limit: int = 160) -> dict[str, Any]:
-        start = max(1, int(start))
-        end = min(len(self.lines), int(end))
-        if start > end:
-            return {"text": "", "truncated": False}
-        selected = self.lines[start - 1 : end]
-        truncated = len(selected) > limit
-        selected = selected[:limit]
-        return {
-            "text": "\n".join(self._format_line(start + offset, line) for offset, line in enumerate(selected)),
-            "truncated": truncated,
-        }
-
-    def search(self, keyword: str, limit: int = 20) -> dict[str, Any]:
-        matches = [
-            {"line_number": number, "line": self._format_line(number, line)[:300]}
-            for number, line in enumerate(self.lines, 1)
-            if keyword and keyword in line
-        ]
-        return {"total_matches": len(matches), "truncated": len(matches) > limit, "matches": matches[:limit]}
-
-    def context(self, dialogue_line: int, radius: int = 60) -> str:
-        text = self.read_lines(dialogue_line - radius, dialogue_line + radius, limit=radius * 2 + 1)["text"]
-        target_prefixes = (f"{dialogue_line}:", f"{dialogue_line} ")
-        return "\n".join(
-            f">>> TARGET SOURCE LINE {line}" if line.startswith(target_prefixes) else line
-            for line in text.splitlines()
-        )
 
 
 def emotion_source_hash(text: str, dialogues: list[dict]) -> str:

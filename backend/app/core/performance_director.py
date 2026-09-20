@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
 from app.core.llm_client import LLMClient, LLMResult, SENSENOVA_FLASH_LITE_MODEL
+from app.core.novel_index import NovelIndex
 from app.core._shared import (
     assistant_tool_message as _assistant_message,
     atomic_write_json as _atomic_write_json,
@@ -464,77 +465,6 @@ PERFORMANCE_PROMPT_SIGNATURE = hashlib.sha256(
 ).hexdigest()
 
 
-class NovelIndex:
-    """Numbered novel access plus dialogue-speaker metadata."""
-
-    def __init__(self, text: str, dialogues: Sequence[dict[str, Any]]):
-        if not isinstance(text, str) or not text.splitlines():
-            raise ValueError("novel text must contain at least one source line")
-        self.lines = text.splitlines()
-        self.dialogues = list(dialogues)
-        self.line_to_speakers: dict[int, list[str]] = {}
-        self.speaker_to_dialogues: dict[str, list[tuple[int, dict[str, Any]]]] = {}
-        for dialogue_index, dialogue in enumerate(self.dialogues):
-            line = int(dialogue.get("line", 0) or 0)
-            speaker = str(dialogue.get("speaker", "")).strip()
-            if line > 0 and speaker:
-                speakers = self.line_to_speakers.setdefault(line, [])
-                if speaker not in speakers:
-                    speakers.append(speaker)
-                self.speaker_to_dialogues.setdefault(speaker, []).append((dialogue_index, dialogue))
-
-    def _format_line(self, number: int) -> str:
-        speakers = self.line_to_speakers.get(number, [])
-        label = f" [speaker: {', '.join(speakers)}]" if speakers else ""
-        return f"{number}{label}: {self.lines[number - 1].strip()}"
-
-    def read_lines(self, start: int, end: int, limit: int = 240) -> dict[str, Any]:
-        start = max(1, int(start))
-        end = min(len(self.lines), int(end))
-        if start > end:
-            return {"text": "", "truncated": False}
-        numbers = list(range(start, end + 1))
-        truncated = len(numbers) > limit
-        numbers = numbers[:limit]
-        return {
-            "text": "\n".join(self._format_line(number) for number in numbers),
-            "truncated": truncated,
-        }
-
-    def search(self, keyword: str, limit: int = 20) -> dict[str, Any]:
-        keyword = str(keyword).strip()
-        matches = [
-            {"line_number": number, "line": self._format_line(number)[:500]}
-            for number, line in enumerate(self.lines, 1)
-            if keyword and keyword in line
-        ]
-        return {"total_matches": len(matches), "truncated": len(matches) > limit, "matches": matches[:limit]}
-
-    def context(self, target_line: int, radius: int = 100) -> str:
-        text = self.read_lines(target_line - radius, target_line + radius, radius * 2 + 1)["text"]
-        target_prefixes = (f"{target_line}:", f"{target_line} ")
-        return "\n".join(
-            f">>> TARGET SOURCE LINE {line}" if line.startswith(target_prefixes) else line
-            for line in text.splitlines()
-        )
-
-    def character_samples(self, speaker: str, max_samples: int = 18, radius: int = 2) -> str:
-        occurrences = self.speaker_to_dialogues.get(speaker, [])
-        if not occurrences:
-            return "(no labeled occurrences)"
-        positions = _evenly_spaced_positions(len(occurrences), min(max_samples, len(occurrences)))
-        windows: list[str] = []
-        used_lines: set[int] = set()
-        for position in positions:
-            _, dialogue = occurrences[position]
-            line = int(dialogue.get("line", 0) or 0)
-            if line <= 0 or line in used_lines:
-                continue
-            used_lines.add(line)
-            windows.append(self.read_lines(line - radius, line + radius, radius * 2 + 1)["text"])
-        return "\n\n--- REPRESENTATIVE OCCURRENCE ---\n".join(windows)
-
-
 @dataclass
 class _CallState:
     trace_id: str
@@ -543,14 +473,6 @@ class _CallState:
     def next_round(self) -> int:
         self.calls += 1
         return self.calls
-
-
-def _evenly_spaced_positions(total: int, count: int) -> list[int]:
-    if total <= 0 or count <= 0:
-        return []
-    if count == 1:
-        return [0]
-    return sorted({round(position * (total - 1) / (count - 1)) for position in range(count)})
 
 
 def _canonical_json(value: Any) -> bytes:
