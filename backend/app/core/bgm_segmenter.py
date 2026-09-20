@@ -13,6 +13,14 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.core.llm_client import LLMClient, LLMResult, SENSENOVA_FLASH_LITE_MODEL, ToolCall
+from app.core._shared import (
+    assistant_tool_message as _assistant_tool_message,
+    atomic_write_json as _atomic_write_json,
+    cumulative_usage as _cumulative_usage,
+    merge_usage_summaries as _merge_usage_summaries,
+    normalise_usage_summary as _normalise_usage_summary,
+    usage_delta as _usage_delta,
+)
 
 logger = logging.getLogger("bgm_segmenter")
 
@@ -21,7 +29,6 @@ DEFAULT_SEGMENT_CHECKPOINT = Path("backend/data/bgm_segmentation.checkpoint.json
 DEFAULT_TYPE_CHECKPOINT = Path("backend/data/bgm_types.checkpoint.json")
 BGM_SEGMENTATION_PIPELINE_VERSION = 2
 BGM_TYPE_PIPELINE_VERSION = 2
-_USAGE_KEYS = ("calls", "prompt_tokens", "completion_tokens", "total_tokens")
 
 
 class SegmentationError(RuntimeError):
@@ -40,34 +47,6 @@ def _flash_lite_model(client: LLMClient) -> str:
             f"BGM LLM stages require {SENSENOVA_FLASH_LITE_MODEL}, got {model_name}"
         )
     return model_name
-
-
-def _normalise_usage_summary(raw: Any) -> dict[str, int]:
-    if not isinstance(raw, dict):
-        raw = {}
-    usage: dict[str, int] = {}
-    for key in _USAGE_KEYS:
-        try:
-            usage[key] = max(0, int(raw.get(key, 0) or 0))
-        except (TypeError, ValueError):
-            usage[key] = 0
-    return usage
-
-
-def _usage_delta(current: Any, starting: Any) -> dict[str, int]:
-    current_usage = _normalise_usage_summary(current)
-    starting_usage = _normalise_usage_summary(starting)
-    return {key: max(0, current_usage[key] - starting_usage[key]) for key in _USAGE_KEYS}
-
-
-def _merge_usage_summaries(left: Any, right: Any) -> dict[str, int]:
-    left_usage = _normalise_usage_summary(left)
-    right_usage = _normalise_usage_summary(right)
-    return {key: left_usage[key] + right_usage[key] for key in _USAGE_KEYS}
-
-
-def _cumulative_usage(client: LLMClient, previous: Any, starting: Any) -> dict[str, int]:
-    return _merge_usage_summaries(previous, _usage_delta(client.usage_summary(), starting))
 
 
 def _segment_inputs_hash(segments: list[dict[str, Any]]) -> str:
@@ -394,21 +373,6 @@ def _execute_tool(
         problems = validate_segments(segments, len(index.lines), min_segments, max_segments)
         return ("Accepted: segmentation is complete", True) if not problems else ("Rejected: " + "; ".join(problems), False)
     return f"Unknown tool: {call.name}", False
-
-
-def _assistant_tool_message(result: Any) -> dict[str, Any]:
-    return {
-        "role": "assistant",
-        "content": result.content or "",
-        "tool_calls": [
-            {
-                "id": call.id,
-                "type": "function",
-                "function": {"name": call.name, "arguments": json.dumps(call.arguments, ensure_ascii=False)},
-            }
-            for call in result.tool_calls
-        ],
-    }
 
 
 def _normalise_segment(raw: dict[str, Any]) -> dict[str, Any]:
@@ -1479,17 +1443,3 @@ def _extract_bgm_types(content: str, expected: int) -> Optional[list[dict[str, A
             return None
         checked.append({"segment_index": position, "bgm_type": bgm_type})
     return checked
-
-
-def _atomic_write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    for attempt in range(6):
-        try:
-            temporary.replace(path)
-            return
-        except PermissionError:
-            if attempt == 5:
-                raise
-            time.sleep(0.1 * (2**attempt))

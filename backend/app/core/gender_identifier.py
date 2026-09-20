@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.core.llm_client import LLMClient, LLMResult, SENSENOVA_FLASH_LITE_MODEL, ToolCall
+from app.core._shared import (
+    assistant_tool_message as _assistant_tool_message,
+    atomic_write_json as _atomic_write_json,
+    normalise_usage_summary as _normalise_usage_summary,
+)
 
 logger = logging.getLogger("gender_identifier")
 
@@ -240,24 +245,6 @@ specific source line numbers in evidence. Return unknown when the text does not
 support male or female. Never convert unknown to a guessed default. Finish only by
 calling submit_gender for the requested character.
 """
-
-
-def _assistant_tool_message(result: LLMResult) -> dict[str, Any]:
-    return {
-        "role": "assistant",
-        "content": result.content or "",
-        "tool_calls": [
-            {
-                "id": call.id,
-                "type": "function",
-                "function": {
-                    "name": call.name,
-                    "arguments": json.dumps(call.arguments, ensure_ascii=False),
-                },
-            }
-            for call in result.tool_calls
-        ],
-    }
 
 
 def _execute_tool(call: ToolCall, index: NovelIndex) -> str:
@@ -544,13 +531,6 @@ def identify_all_genders(
     return [completed[name] for name in character_names if name in completed]
 
 
-def _normalise_usage_summary(raw: dict[str, Any]) -> dict[str, int]:
-    return {
-        key: int(raw.get(key, 0) or 0)
-        for key in ("calls", "prompt_tokens", "completion_tokens", "total_tokens")
-    }
-
-
 def _gender_checkpoint_payload(
     character_names: list[str],
     completed: dict[str, dict[str, Any]],
@@ -574,17 +554,3 @@ def _gender_checkpoint_payload(
         "errors": errors,
         "llm_usage": cumulative_usage,
     }
-
-
-def _atomic_write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    for attempt in range(6):
-        try:
-            temporary.replace(path)
-            return
-        except PermissionError:
-            if attempt == 5:
-                raise
-            time.sleep(0.1 * (2**attempt))

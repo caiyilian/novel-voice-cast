@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.core.llm_client import LLMClient, LLMResult, SENSENOVA_FLASH_LITE_MODEL, ToolCall
+from app.core._shared import (
+    assistant_tool_message as _assistant_message,
+    merge_usage_summaries as _merge_usage_summaries,
+    normalise_usage_summary as _normalise_usage_summary,
+)
 
 logger = logging.getLogger("emotion_labeler")
 
@@ -193,21 +198,6 @@ every cited source line in evidence_lines; evidence_lines must include the targe
 line. Use calm/serious only when genuinely supported, not as a parsing fallback. Finish
 with one required submission tool call for the target dialogue shown verbatim.
 """
-
-
-def _assistant_message(result: LLMResult) -> dict[str, Any]:
-    return {
-        "role": "assistant",
-        "content": result.content or "",
-        "tool_calls": [
-            {
-                "id": call.id,
-                "type": "function",
-                "function": {"name": call.name, "arguments": json.dumps(call.arguments, ensure_ascii=False)},
-            }
-            for call in result.tool_calls
-        ],
-    }
 
 
 def _validate(
@@ -644,15 +634,3 @@ def _write_checkpoint(
                 raise
             time.sleep(0.1 * (2**attempt))
 
-
-def _normalise_usage_summary(raw: dict[str, Any]) -> dict[str, int]:
-    return {
-        key: int(raw.get(key, 0) or 0)
-        for key in ("calls", "prompt_tokens", "completion_tokens", "total_tokens")
-    }
-
-
-def _merge_usage_summaries(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, int]:
-    previous = _normalise_usage_summary(previous)
-    current = _normalise_usage_summary(current)
-    return {key: previous[key] + current[key] for key in previous}

@@ -24,6 +24,12 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
 from app.core.llm_client import LLMClient, LLMResult, SENSENOVA_FLASH_LITE_MODEL
+from app.core._shared import (
+    assistant_tool_message as _assistant_message,
+    atomic_write_json as _atomic_write_json,
+    merge_usage_summaries as _add_usage,
+    normalise_usage_summary as _normalise_usage,
+)
 
 logger = logging.getLogger("performance_director")
 
@@ -623,21 +629,6 @@ def performance_direction_source_hash(
     digest = hashlib.sha256(novel_text.encode("utf-8"))
     digest.update(_canonical_json(canonical))
     return digest.hexdigest()
-
-
-def _assistant_message(result: LLMResult) -> dict[str, Any]:
-    return {
-        "role": "assistant",
-        "content": result.content or "",
-        "tool_calls": [
-            {
-                "id": call.id,
-                "type": "function",
-                "function": {"name": call.name, "arguments": json.dumps(call.arguments, ensure_ascii=False)},
-            }
-            for call in result.tool_calls
-        ],
-    }
 
 
 def _execute_exploration_tool(name: str, arguments: dict[str, Any], index: NovelIndex) -> str:
@@ -2662,12 +2653,6 @@ def _empty_usage() -> dict[str, int]:
     return {key: 0 for key in _USAGE_KEYS}
 
 
-def _normalise_usage(value: Any) -> dict[str, int]:
-    if not isinstance(value, dict):
-        return _empty_usage()
-    return {key: max(0, int(value.get(key, 0) or 0)) for key in _USAGE_KEYS}
-
-
 def _usage_snapshot(client: Any) -> dict[str, int]:
     summary = getattr(client, "usage_summary", None)
     return _normalise_usage(summary() if callable(summary) else {})
@@ -2676,24 +2661,6 @@ def _usage_snapshot(client: Any) -> dict[str, int]:
 def _usage_delta(client: Any, baseline: dict[str, int]) -> dict[str, int]:
     current = _usage_snapshot(client)
     return {key: max(0, current[key] - baseline[key]) for key in _USAGE_KEYS}
-
-
-def _add_usage(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
-    return {key: int(left.get(key, 0)) + int(right.get(key, 0)) for key in _USAGE_KEYS}
-
-
-def _atomic_write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    for attempt in range(6):
-        try:
-            os.replace(temporary, path)
-            return
-        except PermissionError:
-            if attempt == 5:
-                raise
-            time.sleep(0.05 * (2**attempt))
 
 
 __all__ = [
