@@ -2111,8 +2111,10 @@ def run_cosyvoice_tasks(tasks: list[dict[str, Any]], config: dict[str, Any]) -> 
     out_dir.mkdir(parents=True, exist_ok=True)
 
     cosyvoice = config.get("cosyvoice", {})
+    repo_path = cosyvoice.get("repo_path", "")
     spec = {
         "tasks": tasks,
+        "repo_path": str(resolve_path(repo_path)) if repo_path else "",
         "model_path": str(resolve_path(cosyvoice.get("model_path", "backend/models/CosyVoice3-0.5B"))),
         "results_path": str(results_path),
         "task_attempts": int(cosyvoice.get("task_attempts", 3)),

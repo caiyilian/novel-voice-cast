@@ -74,13 +74,19 @@ def main(argv: list[str]) -> int:
     results_path = spec["results_path"]
     task_attempts = int(spec.get("task_attempts", 3))
 
-    sys.path.insert(0, model_path)
-    # CosyVoice 3 uses the CosyVoice2 CLI class (loads the 0.5B instruct model).
-    from cosyvoice.cli.cosyvoice import CosyVoice2
+    repo_path = spec.get("repo_path", "")
+    if repo_path:
+        # repo_path 是 CosyVoice 仓库根（含 cosyvoice 包 + third_party/Matcha-TTS）。
+        sys.path.insert(0, repo_path)
+        sys.path.insert(0, os.path.join(repo_path, "third_party", "Matcha-TTS"))
+    else:
+        sys.path.insert(0, model_path)
+    # CosyVoice 3 用 AutoModel 工厂函数（按 model_dir 里的模型类型自动识别）。
+    from cosyvoice.cli.cosyvoice import AutoModel
     import torchaudio
 
-    model = CosyVoice2(model_path, load_jit=False, load_trt=False, fp16=False)
-    sample_rate = int(getattr(model, "sample_rate", 24000))
+    model = AutoModel(model_dir=model_path)
+    sample_rate = int(model.sample_rate)
 
     results: dict = {}
     try:
@@ -100,10 +106,12 @@ def main(argv: list[str]) -> int:
         temporary_wav = task["output_path"] + f".{os.getpid()}.tmp.wav"
         for attempt in range(1, task_attempts + 1):
             try:
+                # CosyVoice 3 instruct 需要 "You are a helpful assistant." 前缀 + <|endofprompt|> 分隔。
+                instruct = f"You are a helpful assistant. {task.get('instruct_text') or ''}<|endofprompt|>"
                 chunks = []
-                for item in model.inference_instruct(
+                for item in model.inference_instruct2(
                     task["text"],
-                    task["instruct_text"] or "",
+                    instruct,
                     task["reference_audio"],
                     stream=False,
                 ):
