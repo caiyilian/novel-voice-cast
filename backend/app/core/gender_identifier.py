@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional
 
@@ -436,8 +437,13 @@ def identify_all_genders(
     checkpoint_path: Path | str | None = DEFAULT_CHECKPOINT,
     resume: bool = True,
     item_retries: int = 3,
+    max_workers: int = 8,
 ) -> list[dict[str, Any]]:
-    """Identify all characters with per-character atomic checkpointing."""
+    """Identify all characters with per-character atomic checkpointing.
+
+    Character analyses are independent, so they run concurrently over a
+    thread pool; the main thread collects results and writes checkpoints.
+    """
     client = client or LLMClient.for_flash_lite("gender")
     usage_at_start = _normalise_usage_summary(client.usage_summary())
     index = NovelIndex(text, dialogues)
@@ -471,11 +477,11 @@ def identify_all_genders(
         except (OSError, json.JSONDecodeError, TypeError):
             logger.warning("Ignoring invalid gender checkpoint: %s", checkpoint)
 
-    for position, name in enumerate(character_names, 1):
-        if name in completed:
-            continue
-        last_error: Optional[Exception] = None
+    pending = [name for name in character_names if name not in completed]
+
+    def _process_one(name: str) -> tuple[str, Optional[dict[str, Any]], Optional[Exception]]:
         item_calls_before = client.usage_summary()["calls"]
+        last_error: Optional[Exception] = None
         for attempt in range(1, item_retries + 1):
             try:
                 value = identify_gender(
@@ -488,46 +494,44 @@ def identify_all_genders(
                 )
                 value["agent_calls"] = client.usage_summary()["calls"] - item_calls_before
                 value["item_attempts"] = attempt
-                completed[name] = value
-                errors.pop(name, None)
-                break
+                return name, value, None
             except Exception as exc:
                 last_error = exc
                 logger.warning("Gender %s attempt %d/%d failed: %s", name, attempt, item_retries, exc)
-        if name not in completed:
-            errors[name] = str(last_error)
-            if checkpoint:
-                _atomic_write_json(
-                    checkpoint,
-                    _gender_checkpoint_payload(
-                        character_names,
-                        completed,
-                        errors,
-                        client,
-                        source_hash,
-                        model_name,
-                        previous_usage,
-                        usage_at_start,
-                    ),
-                )
-            raise GenderBatchError(
-                f"Character {name} failed after {item_retries} attempts; rerun to resume from {checkpoint}: {last_error}"
-            )
-        logger.info("Gender progress %d/%d: %s -> %s", position, len(character_names), name, completed[name]["gender"])
-        if checkpoint:
-            _atomic_write_json(
-                checkpoint,
-                _gender_checkpoint_payload(
-                    character_names,
-                    completed,
-                    errors,
-                    client,
-                    source_hash,
-                    model_name,
-                    previous_usage,
-                    usage_at_start,
-                ),
-            )
+        return name, None, last_error
+
+    if pending:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_to_name = {pool.submit(_process_one, name): name for name in pending}
+            for done, future in enumerate(as_completed(future_to_name), 1):
+                name, value, error = future.result()
+                if value is not None:
+                    completed[name] = value
+                    errors.pop(name, None)
+                else:
+                    errors[name] = str(error)
+                status = completed[name]["gender"] if value is not None else "error"
+                logger.info("Gender progress %d/%d: %s -> %s", done, len(character_names), name, status)
+                if checkpoint:
+                    _atomic_write_json(
+                        checkpoint,
+                        _gender_checkpoint_payload(
+                            character_names,
+                            completed,
+                            errors,
+                            client,
+                            source_hash,
+                            model_name,
+                            previous_usage,
+                            usage_at_start,
+                        ),
+                    )
+
+    failed = [name for name in character_names if name not in completed]
+    if failed:
+        raise GenderBatchError(
+            f"Characters failed after {item_retries} attempts; rerun to resume from {checkpoint}: {failed}"
+        )
     return [completed[name] for name in character_names if name in completed]
 
 

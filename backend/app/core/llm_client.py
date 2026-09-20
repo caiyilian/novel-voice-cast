@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -96,6 +97,8 @@ class LLMClient:
         self._call_sequence = 0
         self.run_id = uuid.uuid4().hex
         self._totals = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        # 并发安全：保护 call sequence 递增、usage 汇总与 telemetry 写入。
+        self._lock = threading.Lock()
 
     @classmethod
     def for_flash_lite(
@@ -210,7 +213,9 @@ class LLMClient:
         model = kwargs["model"]
         account_index = kwargs["account_index"]
         started = time.perf_counter()
-        self._call_sequence += 1
+        with self._lock:
+            self._call_sequence += 1
+            call_sequence = self._call_sequence
         try:
             result = self._call_openai(**kwargs, request_attempts=1)
         except Exception as exc:
@@ -224,6 +229,7 @@ class LLMClient:
                 "error",
                 str(exc),
                 agent_role,
+                call_sequence=call_sequence,
                 trace_id=trace_id,
                 agent_round=agent_round,
                 tools=kwargs.get("tools"),
@@ -259,6 +265,7 @@ class LLMClient:
             "",
             agent_role,
             response_meta,
+            call_sequence=call_sequence,
             trace_id=trace_id,
             agent_round=agent_round,
             tools=kwargs.get("tools"),
@@ -277,6 +284,7 @@ class LLMClient:
         error: str,
         agent_role: str,
         response_meta: Optional[dict[str, Any]] = None,
+        call_sequence: Optional[int] = None,
         trace_id: str = "",
         agent_round: Optional[int] = None,
         tools: Optional[list[dict]] = None,
@@ -286,6 +294,7 @@ class LLMClient:
         context_tokens = int(usage.get("prompt_tokens", 0)) or estimated_context
         context_window = self.context_window_tokens
         reserved_context = context_tokens + max(0, requested_max_tokens)
+        seq = call_sequence if call_sequence is not None else self._call_sequence
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "module": self.module_name,
@@ -293,8 +302,8 @@ class LLMClient:
             "trace_id": trace_id,
             "agent_round": agent_round,
             "run_id": self.run_id,
-            "request_id": f"{self.run_id}:{self._call_sequence}",
-            "call": self._call_sequence,
+            "request_id": f"{self.run_id}:{seq}",
+            "call": seq,
             "model": model,
             "account": account_index + 1 if account_index >= 0 else "agnes",
             "status": status,
@@ -328,13 +337,14 @@ class LLMClient:
             context_window,
             elapsed,
         )
-        if self.telemetry_path:
-            self.telemetry_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.telemetry_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        self._totals["calls"] += 1
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-            self._totals[key] += record[key]
+        with self._lock:
+            if self.telemetry_path:
+                self.telemetry_path.parent.mkdir(parents=True, exist_ok=True)
+                with self.telemetry_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self._totals["calls"] += 1
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                self._totals[key] += record[key]
 
     @staticmethod
     def _call_openai(
