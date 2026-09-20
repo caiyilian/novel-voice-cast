@@ -414,6 +414,7 @@ def test_direction_checkpoint_expansion_reuses_unaffected_and_regenerates_contin
         {},
         client=old_client,
         checkpoint_path=checkpoint,
+        max_workers=1,
     )
 
     extra_profile = copy.deepcopy(profile_candidate())
@@ -439,6 +440,7 @@ def test_direction_checkpoint_expansion_reuses_unaffected_and_regenerates_contin
         {},
         client=expanded_client,
         checkpoint_path=checkpoint,
+        max_workers=1,
     )
 
     assert len(expanded_client.calls) == 6
