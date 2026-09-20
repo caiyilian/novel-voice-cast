@@ -203,7 +203,7 @@ def test_label_all_injects_recent_emotion_memory():
         resp(2, "happy", "gentle", review=True),
     ])
 
-    label_all_emotions(dialogues, text, client=client, checkpoint_path=None)
+    label_all_emotions(dialogues, text, client=client, checkpoint_path=None, max_workers=1)
 
     second_primary = client.messages[2][1]["content"]
     assert "Recent emotional context of earlier lines" in second_primary

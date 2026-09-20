@@ -6,7 +6,9 @@ import json
 import hashlib
 import logging
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional
 
@@ -472,6 +474,7 @@ def label_all_emotions(
     max_tool_steps: int = 6,
     item_retries: int = 3,
     max_items: Optional[int] = None,
+    max_workers: int = 8,
 ) -> dict[str, dict[str, Any]]:
     """Label a volume one dialogue at a time with an atomic resumable checkpoint."""
     client = client or LLMClient.for_flash_lite("emotion")
@@ -532,7 +535,8 @@ def label_all_emotions(
         if len(recent) > RECENT_MEMORY_SIZE:
             recent.pop(0)
 
-    newly_processed = 0
+    recent_lock = threading.Lock()
+    pending = []
     for dialogue_index, dialogue in enumerate(dialogues):
         key = str(dialogue_index)
         speaker = str(dialogue.get("speaker", "")).strip()
@@ -540,7 +544,15 @@ def label_all_emotions(
             continue
         if key in results:
             continue
-        memory = _build_recent_memory(recent)
+        pending.append((dialogue_index, key, speaker, dialogue))
+    if max_items is not None:
+        pending = pending[:max_items]
+
+    def _process_one(
+        dialogue_index: int, key: str, speaker: str, dialogue: dict
+    ) -> tuple[str, str, Optional[dict[str, Any]], Optional[Exception]]:
+        with recent_lock:
+            memory = _build_recent_memory(recent)
         last_error: Optional[Exception] = None
         item_calls_before = client.usage_summary()["calls"]
         for attempt in range(1, item_retries + 1):
@@ -559,41 +571,56 @@ def label_all_emotions(
                 )
                 value["agent_calls"] = client.usage_summary()["calls"] - item_calls_before
                 value["item_attempts"] = attempt
-                results[key] = value
-                errors.pop(key, None)
-                break
+                return key, speaker, value, None
             except Exception as exc:
                 last_error = exc
                 logger.warning("Emotion index %s attempt %d/%d failed: %s", key, attempt, item_retries, exc)
-        if key in results:
-            recent.append({
-                "speaker": speaker,
-                "emotion": results[key].get("emotion"),
-                "tone": results[key].get("tone"),
-            })
-            if len(recent) > RECENT_MEMORY_SIZE:
-                recent.pop(0)
-        if key not in results:
-            errors[key] = str(last_error)
-        if checkpoint:
-            _write_checkpoint(
-                checkpoint,
-                results,
-                errors,
-                client,
-                source_hash=source_hash,
-                model_name=model_name,
-                previous_usage=previous_usage,
-                usage_at_start=usage_at_start,
-            )
-        if key not in results:
-            raise EmotionBatchError(
-                f"Dialogue {key} failed after {item_retries} attempts; rerun to resume from {checkpoint}: {last_error}"
-            )
-        logger.info("Emotion progress index=%s label=%s/%s", key, results[key]["emotion"], results[key]["tone"])
-        newly_processed += 1
-        if max_items is not None and newly_processed >= max_items:
-            break
+        return key, speaker, None, last_error
+
+    if pending:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_map = {
+                pool.submit(_process_one, dialogue_index, key, speaker, dialogue): key
+                for dialogue_index, key, speaker, dialogue in pending
+            }
+            for done, future in enumerate(as_completed(future_map), 1):
+                key, speaker, value, error = future.result()
+                if value is not None:
+                    results[key] = value
+                    errors.pop(key, None)
+                    with recent_lock:
+                        recent.append({
+                            "speaker": speaker,
+                            "emotion": value.get("emotion"),
+                            "tone": value.get("tone"),
+                        })
+                        if len(recent) > RECENT_MEMORY_SIZE:
+                            recent.pop(0)
+                else:
+                    errors[key] = str(error)
+                if checkpoint:
+                    _write_checkpoint(
+                        checkpoint,
+                        results,
+                        errors,
+                        client,
+                        source_hash=source_hash,
+                        model_name=model_name,
+                        previous_usage=previous_usage,
+                        usage_at_start=usage_at_start,
+                    )
+                logger.info(
+                    "Emotion progress index=%s label=%s/%s",
+                    key,
+                    results[key].get("emotion") if value is not None else "error",
+                    results[key].get("tone") if value is not None else "",
+                )
+
+    failed = [key for _, key, _, _ in pending if key not in results]
+    if failed:
+        raise EmotionBatchError(
+            f"Dialogues failed after {item_retries} attempts; rerun to resume from {checkpoint}: {failed}"
+        )
     return results
 
 
