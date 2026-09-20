@@ -22,6 +22,7 @@ import threading
 import time
 import wave
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -1984,31 +1985,61 @@ def run_cosyvoice_tasks(tasks: list[dict[str, Any]], config: dict[str, Any]) -> 
             raise PipelineError(f"CosyVoice reference audio is missing or empty: {reference}")
 
     out_dir = output_dir(config)
-    results_path = out_dir / "cosyvoice_results.json"
-    spec_path = out_dir / "_cosyvoice_spec.json"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     cosyvoice = config.get("cosyvoice", {})
+    workers = max(1, int(cosyvoice.get("workers", 1)))
+    fp16 = bool(cosyvoice.get("fp16", False))
     repo_path = cosyvoice.get("repo_path", "")
-    spec = {
-        "tasks": tasks,
-        "repo_path": str(resolve_path(repo_path)) if repo_path else "",
-        "model_path": str(resolve_path(cosyvoice.get("model_path", "backend/models/CosyVoice3-0.5B"))),
-        "results_path": str(results_path),
-        "task_attempts": int(cosyvoice.get("task_attempts", 3)),
-    }
-    spec_path.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+    model_path = str(resolve_path(cosyvoice.get("model_path", "backend/models/CosyVoice3-0.5B")))
+    timeout = int(cosyvoice.get("timeout", 604800))
+    task_attempts = int(cosyvoice.get("task_attempts", 3))
     worker_path = ROOT / "backend" / "cosyvoice_worker.py"
-    try:
-        run_checked_subprocess(
-            [str(resolve_cosyvoice_python(config)), str(worker_path), str(spec_path)],
-            timeout=int(cosyvoice.get("timeout", 604800)),
-        )
-    finally:
-        spec_path.unlink(missing_ok=True)
+    python_path = str(resolve_cosyvoice_python(config))
 
-    checkpoint = read_json(results_path, {})
-    raw_results = checkpoint.get("results", {}) if isinstance(checkpoint, dict) else {}
+    # Round-robin so long and short lines spread evenly across workers.
+    groups: list[list[dict[str, Any]]] = [[] for _ in range(workers)]
+    for position, task in enumerate(tasks):
+        groups[position % workers].append(task)
+
+    spec_files: list[tuple[Path, Path]] = []
+    for group_index, group in enumerate(groups):
+        if not group:
+            continue
+        spec_path = out_dir / f"_cosyvoice_spec_{group_index}.json"
+        results_path = out_dir / f"cosyvoice_results_{group_index}.json"
+        spec = {
+            "tasks": group,
+            "repo_path": str(resolve_path(repo_path)) if repo_path else "",
+            "model_path": model_path,
+            "results_path": str(results_path),
+            "task_attempts": task_attempts,
+            "fp16": fp16,
+        }
+        spec_path.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+        spec_files.append((spec_path, results_path))
+
+    def _run_one(spec_path: Path) -> None:
+        run_checked_subprocess([python_path, str(worker_path), str(spec_path)], timeout=timeout)
+
+    try:
+        if len(spec_files) == 1:
+            _run_one(spec_files[0][0])
+        else:
+            with ThreadPoolExecutor(max_workers=len(spec_files)) as pool:
+                futures = [pool.submit(_run_one, spec_path) for spec_path, _ in spec_files]
+                for future in as_completed(futures):
+                    future.result()
+    finally:
+        for spec_path, _ in spec_files:
+            spec_path.unlink(missing_ok=True)
+
+    raw_results: dict[str, Any] = {}
+    for _, results_path in spec_files:
+        checkpoint = read_json(results_path, {})
+        if isinstance(checkpoint, dict) and isinstance(checkpoint.get("results"), dict):
+            raw_results.update(checkpoint["results"])
+
     task_by_key = {str(task.get("task_key", task["index"])): task for task in tasks}
     results = [raw_results.get(key, {}) for key in task_by_key]
     failures = []
