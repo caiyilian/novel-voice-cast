@@ -71,7 +71,6 @@ from scripts.desktop_events import DesktopEventEmitter, DesktopEventLoggingHandl
 STAGES = (
     "parse",
     "gender",
-    "emotion",
     "performance",
     "tts",
     "splice",
@@ -89,7 +88,6 @@ NARRATOR_SPEAKER = "旁白"
 STAGE_OPERATIONS = {
     "parse": "正在解析小说与角色标注",
     "gender": "正在识别角色性别",
-    "emotion": "正在标注逐句情绪",
     "performance": "正在生成角色档案与逐句表演指导",
     "tts": "正在用 VoxCPM 生成语音",
     "splice": "正在拼接完整语音",
@@ -1009,10 +1007,6 @@ def gender_result_path() -> Path:
     return ROOT / "backend" / "data" / "gender_results.json"
 
 
-def emotion_result_path() -> Path:
-    return ROOT / "backend" / "data" / "emotion_results.json"
-
-
 def performance_profile_result_path(config: dict[str, Any] | None = None) -> Path:
     configured = (config or {}).get("performance", {}).get("profile_output_path")
     return resolve_path(configured) if configured else ROOT / "backend" / "data" / "performance_profiles.json"
@@ -1118,111 +1112,6 @@ def require_gender_results(
     if not gender_cache_valid(results, names, gender_source_hash(novel_text, names, dialogues)):
         raise PipelineError("Valid gender cache is required before starting from the TTS stage")
     return results
-
-
-def step_emotion(
-    config: dict[str, Any], dialogues: list[dict], novel_text: str, force_reprocess: bool = False
-) -> dict[str, Any]:
-    from app.core.emotion_labeler import (
-        EMOTION_PIPELINE_VERSION,
-        emotion_source_hash,
-        label_all_emotions,
-    )
-
-    path = emotion_result_path()
-    cached = read_json(path, {})
-    source_hash = emotion_source_hash(novel_text, dialogues)
-    if not force_reprocess and emotion_cache_valid(cached, dialogues, source_hash):
-        print(f"  using cached emotion results: {path}")
-        return cached.get("results", {})
-
-    client = build_flash_lite_client("emotion")
-    checkpoint_path = ROOT / "backend/data/emotion_results.checkpoint.json"
-    results = label_all_emotions(
-        dialogues,
-        novel_text,
-        client=client,
-        checkpoint_path=str(checkpoint_path),
-        resume=not force_reprocess,
-        max_tool_steps=6,
-        item_retries=3,
-    )
-    checkpoint = read_json(checkpoint_path, {})
-    write_json(
-        path,
-        {
-            "meta": {
-                "model": SENSENOVA_FLASH_LITE_MODEL,
-                "pipeline_version": EMOTION_PIPELINE_VERSION,
-                "source_hash": source_hash,
-            },
-            "results": results,
-            "llm_usage": checkpoint.get("llm_usage", client.usage_summary()),
-        },
-    )
-    return results
-
-
-def emotion_cache_valid(
-    payload: dict[str, Any],
-    dialogues: list[dict] | None = None,
-    source_hash: str | None = None,
-) -> bool:
-    from app.core.emotion_labeler import EMOTION_PIPELINE_VERSION
-
-    meta = payload.get("meta", {})
-    if (
-        meta.get("model") != SENSENOVA_FLASH_LITE_MODEL
-        or meta.get("pipeline_version") != EMOTION_PIPELINE_VERSION
-        or not meta.get("source_hash")
-    ):
-        return False
-    if source_hash is not None and meta.get("source_hash") != source_hash:
-        return False
-    results = payload.get("results")
-    if not isinstance(results, dict):
-        return False
-    if dialogues is not None:
-        expected = {
-            str(index)
-            for index, dialogue in enumerate(dialogues)
-            if dialogue.get("speaker")
-        }
-        if set(results) != expected:
-            return False
-    return True
-
-
-def require_emotion_results(dialogues: list[dict], novel_text: str) -> dict[str, Any]:
-    from app.core.emotion_labeler import emotion_source_hash
-
-    payload = read_json(emotion_result_path(), {})
-    if not emotion_cache_valid(payload, dialogues, emotion_source_hash(novel_text, dialogues)):
-        raise PipelineError("Valid emotion cache is required before starting from the TTS stage")
-    return payload.get("results", {})
-
-
-def build_emotion_prefix(emotion: str | None = None, tone: str | None = None) -> str:
-    emotion_map = {
-        "happy": "欢快活泼",
-        "sad": "低落悲伤",
-        "angry": "愤怒生气",
-        "surprised": "惊讶震惊",
-        "calm": "平静冷静",
-        "nervous": "紧张焦虑",
-        "cold": "冷漠淡漠",
-    }
-    tone_map = {
-        "loud": "大声",
-        "soft": "轻声",
-        "whisper": "低语",
-        "gentle": "温柔",
-        "serious": "严肃",
-        "sarcastic": "讽刺",
-        "stutter": "结巴",
-    }
-    parts = [value for value in (emotion_map.get(emotion), tone_map.get(tone)) if value]
-    return f"({'，'.join(parts)})" if parts else ""
 
 
 def effective_speaker(speaker: Any) -> str:
@@ -1816,7 +1705,6 @@ def voxcpm_runtime_identity(config: dict[str, Any]) -> dict[str, Any]:
 def tts_fingerprint(
     dialogue: dict[str, Any],
     assignment: dict[str, str],
-    emotion_result: dict[str, Any],
     performance_result: dict[str, Any] | None = None,
     config: dict[str, Any] | None = None,
 ) -> str:
@@ -1850,14 +1738,6 @@ def tts_fingerprint(
             if assignment.get("engine") in {"voxcpm", "cosyvoice"}
             else ""
         ),
-        "legacy_emotion": (
-            {
-                "emotion": emotion_result.get("emotion"),
-                "tone": emotion_result.get("tone"),
-            }
-            if assignment.get("engine") == "voxcpm" and not performance_result
-            else {}
-        ),
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -1867,7 +1747,6 @@ def tts_source_hash(
     config: dict[str, Any],
     dialogues: list[dict[str, Any]],
     gender_results: dict[str, Any],
-    emotion_results: dict[str, Any],
     performance_results: dict[str, Any],
 ) -> str:
     fingerprints = []
@@ -1878,9 +1757,8 @@ def tts_source_hash(
         if gender not in {"male", "female"}:
             gender = "male"
         assignment = get_voice_assignment(speaker, gender, config)
-        emotion = emotion_results.get(str(index), {})
         performance = performance_results.get(str(index), {})
-        fingerprints.append(tts_fingerprint(dialogue, assignment, emotion, performance, config))
+        fingerprints.append(tts_fingerprint(dialogue, assignment, performance, config))
     payload = json.dumps(
         {"pipeline_version": TTS_PIPELINE_VERSION, "fingerprints": fingerprints},
         ensure_ascii=False,
@@ -2199,12 +2077,11 @@ def make_tts_task(
     index: int,
     dialogue: dict[str, Any],
     gender: str,
-    emotion: dict[str, Any],
     performance: dict[str, Any],
 ) -> dict[str, Any]:
     speaker = effective_speaker(dialogue.get("speaker", ""))
     assignment = get_voice_assignment(speaker, gender, config)
-    fingerprint = tts_fingerprint(dialogue, assignment, emotion, performance, config)
+    fingerprint = tts_fingerprint(dialogue, assignment, performance, config)
     path = output_dir(config) / "segments" / f"{index:05d}.wav"
     entry: dict[str, Any] = {
         "index": index,
@@ -2228,14 +2105,10 @@ def make_tts_task(
         task["instruct_text"] = instruct
     elif assignment["engine"] == "voxcpm":
         raw_control = str(performance.get("performance_control", "")).strip()
-        if not raw_control:
-            legacy = build_emotion_prefix(emotion.get("emotion"), emotion.get("tone"))
-            raw_control = legacy[1:-1] if legacy.startswith("(") and legacy.endswith(")") else legacy
         options = voxcpm_generation_options(config)
         control = compact_performance_control(
             raw_control,
             speaker=speaker,
-            emotion=str(emotion.get("emotion", "")),
             pace_hint=str(performance.get("pace", "")),
             max_chars=options["control_max_chars"],
         )
@@ -2530,9 +2403,8 @@ def run_streaming_tts(
             gender = gender_results.get(speaker, {}).get("gender", "male")
             if gender not in {"male", "female"}:
                 gender = "male"
-            emotion = emotion_results.get(str(index), {})
             performance = performance_results.get(str(index), {})
-            task = make_tts_task(config, index, dialogue, gender, emotion, performance)
+            task = make_tts_task(config, index, dialogue, gender, performance)
             if reusable_tts_entry(entries.get(str(index)), task):
                 completed_count += 1
             else:
@@ -2601,7 +2473,6 @@ def step_tts(
     config: dict[str, Any],
     dialogues: list[dict[str, Any]],
     gender_results: dict[str, Any],
-    emotion_results: dict[str, Any],
     performance_results: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     directory = output_dir(config) / "segments"
@@ -2613,7 +2484,6 @@ def step_tts(
         config,
         dialogues,
         gender_results,
-        emotion_results,
         performance_results,
     )
     old_entries = (
@@ -2646,9 +2516,8 @@ def step_tts(
         gender = gender_results.get(speaker, gender_results.get(raw_speaker, {})).get("gender", "male")
         if gender not in {"male", "female"}:
             gender = "male"
-        emotion = emotion_results.get(str(index), {})
         performance = performance_results.get(str(index), {})
-        task = make_tts_task(config, index, dialogue, gender, emotion, performance)
+        task = make_tts_task(config, index, dialogue, gender, performance)
         previous = reusable_entries.get(str(index), {})
         if reusable_tts_entry(previous, task):
             new_entries[str(index)] = completed_tts_entry(task)
@@ -2727,7 +2596,6 @@ def validate_tts_manifest(
     config: dict[str, Any],
     dialogues: list[dict[str, Any]] | None = None,
     gender_results: dict[str, Any] | None = None,
-    emotion_results: dict[str, Any] | None = None,
     performance_results: dict[str, Any] | None = None,
 ) -> list[str]:
     directory = output_dir(config) / "segments"
@@ -2743,16 +2611,14 @@ def validate_tts_manifest(
         performance_required = config.get("features", {}).get("performance_direction", False)
         if (
             gender_results is None
-            or emotion_results is None
             or (performance_required and performance_results is None)
         ):
-            problems.append("current gender, emotion, and enabled performance results are required for TTS validation")
+            problems.append("current gender and enabled performance results are required for TTS validation")
         else:
             expected_hash = tts_source_hash(
                 config,
                 dialogues,
                 gender_results,
-                emotion_results,
                 performance_results or {},
             )
             if manifest.get("source_hash") != expected_hash:
@@ -2773,11 +2639,7 @@ def validate_current_tts_cache(config: dict[str, Any]) -> list[str]:
     try:
         dialogues, characters, novel_text = step_parse(config)
         gender_results = require_gender_results(characters, dialogues, novel_text)
-        emotion_results = (
-            require_emotion_results(dialogues, novel_text)
-            if config.get("features", {}).get("emotion_label", True)
-            else {}
-        )
+        emotion_results = {}
         performance_results = (
             require_performance_results(
                 config,
@@ -2795,7 +2657,6 @@ def validate_current_tts_cache(config: dict[str, Any]) -> list[str]:
         config,
         dialogues,
         gender_results,
-        emotion_results,
         performance_results,
     )
 
@@ -3788,20 +3649,13 @@ def stage_cache_status(stage: str, config: dict[str, Any]) -> tuple[bool, str]:
     if stage == "gender":
         valid = gender_cache_valid(read_json(gender_result_path(), {}))
         return valid, str(gender_result_path())
-    if stage == "emotion":
-        valid = emotion_cache_valid(read_json(emotion_result_path(), {}))
-        return valid, str(emotion_result_path())
     if stage == "performance":
         if not config.get("features", {}).get("performance_direction", False):
             return True, "disabled in config"
         try:
             dialogues, characters, novel_text = step_parse(config)
             gender_results = require_gender_results(characters, dialogues, novel_text)
-            emotion_results = (
-                require_emotion_results(dialogues, novel_text)
-                if config.get("features", {}).get("emotion_label", True)
-                else {}
-            )
+            emotion_results = {}
             valid, problems, _ = performance_cache_valid(
                 config,
                 dialogues,
@@ -4166,7 +4020,7 @@ def main(argv: list[str] | None = None) -> int:
     total_started = time.monotonic()
     parsed: tuple[list[dict], list[str], str] | None = None
     gender_results: dict[str, Any] | None = None
-    emotion_results: dict[str, Any] | None = None
+    emotion_results: dict[str, Any] = {}
     performance_results: dict[str, Any] | None = None
     streaming_tts_process: subprocess.Popen | None = None
     segments: list[dict[str, Any]] | None = None
@@ -4205,39 +4059,6 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
 
-        if "emotion" in selected:
-            if not config.get("features", {}).get("emotion_label", True):
-                emotion_results = {}
-                record_skipped(recorder, "emotion", "disabled in config")
-            else:
-                dialogues, _, novel_text = ensure_parsed()
-                emotion_total = sum(
-                    1
-                    for dialogue in dialogues
-                    if dialogue.get("speaker")
-                )
-                emotion_results = execute_stage(
-                    recorder,
-                    "emotion",
-                    lambda: step_emotion(
-                        config,
-                        dialogues,
-                        novel_text,
-                        force_reprocess=config.get("features", {}).get("force_reprocess", False),
-                    ),
-                    [emotion_result_path()],
-                    progress_probe=checkpoint_progress_probe(
-                        [
-                            (
-                                ROOT / "backend/data/emotion_results.checkpoint.json",
-                                "results",
-                                emotion_total,
-                            )
-                        ],
-                        "已标注情绪",
-                    ),
-                )
-
         if "performance" in selected:
             if not config.get("features", {}).get("performance_direction", False):
                 performance_results = {}
@@ -4246,12 +4067,6 @@ def main(argv: list[str] | None = None) -> int:
                 dialogues, characters, novel_text = ensure_parsed()
                 if gender_results is None:
                     gender_results = require_gender_results(characters, dialogues, novel_text)
-                if emotion_results is None:
-                    emotion_results = (
-                        require_emotion_results(dialogues, novel_text)
-                        if config.get("features", {}).get("emotion_label", True)
-                        else {}
-                    )
                 streaming_enabled = bool(
                     args.stream_tts or config.get("streaming_tts", {}).get("enabled", False)
                 )
@@ -4306,12 +4121,6 @@ def main(argv: list[str] | None = None) -> int:
             dialogues, characters, novel_text = ensure_parsed()
             if gender_results is None:
                 gender_results = require_gender_results(characters, dialogues, novel_text)
-            if emotion_results is None:
-                emotion_results = (
-                    require_emotion_results(dialogues, novel_text)
-                    if config.get("features", {}).get("emotion_label", True)
-                    else {}
-                )
             if performance_results is None:
                 performance_results = (
                     require_performance_results(
@@ -4341,7 +4150,6 @@ def main(argv: list[str] | None = None) -> int:
                     config,
                     dialogues,
                     gender_results or {},
-                    emotion_results or {},
                     performance_results or {},
                 ),
                 [output_dir(config) / "segments", output_dir(config) / "segments/segments_manifest.json"],
@@ -4353,12 +4161,6 @@ def main(argv: list[str] | None = None) -> int:
             if segments is None:
                 if gender_results is None:
                     gender_results = require_gender_results(characters, dialogues, novel_text)
-                if emotion_results is None:
-                    emotion_results = (
-                        require_emotion_results(dialogues, novel_text)
-                        if config.get("features", {}).get("emotion_label", True)
-                        else {}
-                    )
                 if performance_results is None:
                     performance_results = (
                         require_performance_results(
@@ -4375,7 +4177,6 @@ def main(argv: list[str] | None = None) -> int:
                     config,
                     dialogues,
                     gender_results,
-                    emotion_results,
                     performance_results,
                 )
                 if problems:
