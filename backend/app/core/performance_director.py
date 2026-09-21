@@ -2080,7 +2080,7 @@ def direct_all_performances(
     max_agent_rounds: int = 8,
     item_retries: int = 3,
     max_items: Optional[int] = None,
-    max_workers: int = 8,
+    max_workers: int = 20,
 ) -> dict[str, dict[str, Any]]:
     """Direct every selected VoxCPM line in order with resumable continuity.
 
@@ -2388,18 +2388,17 @@ def direct_all_performances(
         speaker = str(index.dialogues[dialogue_index].get("speaker", "")).strip()
         groups.setdefault(speaker, []).append(dialogue_index)
 
-    def _direct_group(group: list[int]) -> None:
-        for dialogue_index in group:
-            _direct_one(dialogue_index)
-
     if groups:
-        if max_workers <= 1 or len(groups) == 1:
+        if max_workers <= 1:
             # 串行：保持 target_indices 顺序，continuity 语义与旧版完全一致。
             for dialogue_index in pending:
                 _direct_one(dialogue_index)
         else:
+            # 组内也并发：所有句子平铺提交，max_workers 控制总并发。
+            # same-speaker continuity 退化为"已完成前文"的近似（非权威参考），
+            # 用连续性换吞吐——主角动辄几百句，组内串行会导致几十小时。
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = [pool.submit(_direct_group, group) for group in groups.values()]
+                futures = [pool.submit(_direct_one, dialogue_index) for dialogue_index in pending]
                 for future in as_completed(futures):
                     future.result()
 
