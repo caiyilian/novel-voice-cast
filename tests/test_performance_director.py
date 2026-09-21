@@ -361,6 +361,7 @@ def test_direction_checkpoint_resumes_exactly_and_preserves_usage(tmp_path):
         {},
         client=client,
         checkpoint_path=checkpoint,
+        max_workers=1,
     )
 
     assert set(results) == {"0", "1"}
@@ -484,7 +485,7 @@ def test_final_payload_validation_binds_source_and_continuity(tmp_path):
     )
     client = FakeClient(response_triplet(LINE_NAMES, first) + response_triplet(LINE_NAMES, second))
     results = direct_all_performances(
-        [0, 1], DIALOGUES, NOVEL, profiles, {}, client=client, checkpoint_path=checkpoint
+        [0, 1], DIALOGUES, NOVEL, profiles, {}, client=client, checkpoint_path=checkpoint, max_workers=1
     )
     source_hash = performance_direction_source_hash(NOVEL, [0, 1], DIALOGUES, profiles, {})
     payload = {
