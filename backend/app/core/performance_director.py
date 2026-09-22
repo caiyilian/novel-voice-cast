@@ -1855,6 +1855,7 @@ def _validate_performance_result(
     context_radius: int,
     min_control_chars: int,
     max_control_chars: int,
+    strict_continuity: bool = True,
 ) -> None:
     dialogue = index.dialogues[dialogue_index]
     speaker = str(dialogue.get("speaker", "")).strip()
@@ -1866,7 +1867,13 @@ def _validate_performance_result(
     if value.get("dialogue_text_sha256") != expected_text_hash:
         raise ValueError("dialogue_text_sha256 does not match the target text")
     if value.get("continuity_input_hash") != _continuity_hash(completed, speaker):
-        raise ValueError("continuity_input_hash does not match preceding performances")
+        if strict_continuity:
+            raise ValueError("continuity_input_hash does not match preceding performances")
+        logger.warning(
+            "continuity_input_hash mismatch for index %s under concurrent execution; "
+            "accepting best-effort continuity",
+            dialogue_index,
+        )
     validator = _PerformanceValidator(
         index,
         dialogue_index,
@@ -2225,6 +2232,7 @@ def direct_all_performances(
                             context_radius=context_radius,
                             min_control_chars=min_control_chars,
                             max_control_chars=max_control_chars,
+                            strict_continuity=False,
                         )
                     except (TypeError, ValueError):
                         break
@@ -2417,6 +2425,7 @@ def validate_performance_payload(
     context_radius: int = 100,
     min_control_chars: int = 18,
     max_control_chars: int = 140,
+    strict_continuity: bool = True,
 ) -> list[str]:
     """Return exact compatibility/completeness problems for a final payload."""
     problems: list[str] = []
@@ -2468,6 +2477,7 @@ def validate_performance_payload(
                 context_radius=context_radius,
                 min_control_chars=min_control_chars,
                 max_control_chars=max_control_chars,
+                strict_continuity=strict_continuity,
             )
         except (TypeError, ValueError) as exc:
             problems.append(f"performance result {dialogue_index} is invalid: {exc}")
