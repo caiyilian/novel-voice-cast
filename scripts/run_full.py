@@ -1342,6 +1342,7 @@ def _validate_performance_group_cache(
         context_radius=int(performance_config.get("context_radius", 100)),
         min_control_chars=int(performance_config.get("min_control_chars", 18)),
         max_control_chars=int(performance_config.get("max_control_chars", 140)),
+        strict_continuity=False,
     )
     return problems, profiles, output_payload.get("results", {}) if not problems else {}
 
@@ -1447,6 +1448,7 @@ def _run_performance_group(
         context_radius=int(performance_config.get("context_radius", 100)),
         min_control_chars=int(performance_config.get("min_control_chars", 18)),
         max_control_chars=int(performance_config.get("max_control_chars", 140)),
+        strict_continuity=False,
     )
     force_directions = bool(performance_config.get("force_directions", False))
     if not direction_problems and not force_directions:
@@ -1505,6 +1507,7 @@ def _run_performance_group(
         context_radius=int(performance_config.get("context_radius", 100)),
         min_control_chars=int(performance_config.get("min_control_chars", 18)),
         max_control_chars=int(performance_config.get("max_control_chars", 140)),
+        strict_continuity=False,
     )
     if final_problems:
         raise PipelineError(f"Performance direction output failed validation: {final_problems[:5]}")
