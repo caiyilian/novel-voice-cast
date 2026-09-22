@@ -86,7 +86,7 @@ cosyvoice:
   enabled: true                # 默认克隆引擎：true 用 CosyVoice 3（否则用 VoxCPM）；natural-language instruct 不压缩控制词
   repo_path: "E:/projects/cosyvoice"                                            # CosyVoice 仓库根（含 cosyvoice 包 + third_party/Matcha-TTS）
   model_path: "E:/projects/cosyvoice/pretrained_models/Fun-CosyVoice3-0.5B"     # 模型目录
-  python: "E:/projects/cosyvoice/.venv/python.exe"
+  python: "E:/projects/cosyvoice/.venv/Scripts/python.exe"
   task_attempts: 3
   workers: 3                   # 本地多进程并发数（12GB 显存 fp16 每进程约 3.5GB，可开 3 个）
   fp16: true                   # 半精度省显存，允许更多并发进程
