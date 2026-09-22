@@ -1807,6 +1807,11 @@ def resolve_cosyvoice_python(config: dict[str, Any]) -> Path:
     configured = config.get("cosyvoice", {}).get("python") or os.environ.get("COSYVOICE_PYTHON")
     path = resolve_path(configured) if configured else Path(sys.executable).resolve()
     if not path.is_file():
+        # Windows venv 的解释器在 Scripts/ 下、POSIX 在 bin/ 下；
+        # 容忍配置写成 <venv>/python.exe 或 <venv>/python 这种简写。
+        for candidate in (path.parent / "Scripts" / path.name, path.parent / "bin" / path.name):
+            if candidate.is_file():
+                return candidate
         raise PipelineError(f"CosyVoice Python interpreter not found: {path}")
     return path
 
