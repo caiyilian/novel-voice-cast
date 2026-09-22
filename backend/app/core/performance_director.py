@@ -1352,13 +1352,13 @@ def _validated_stage_record(
     raw: Any,
     stage: str,
     validator: Callable[[dict[str, Any]], dict[str, Any]],
-    expected_input_hash: str,
+    expected_input_hash: Optional[str],
 ) -> Optional[dict[str, Any]]:
-    if (
-        not isinstance(raw, dict)
-        or raw.get("stage") != stage
-        or raw.get("input_hash") != expected_input_hash
-    ):
+    if not isinstance(raw, dict) or raw.get("stage") != stage:
+        return None
+    # 并发执行时 continuity 乱序，无法用当前 source 复算 input_hash；
+    # 此时 expected_input_hash 传 None，只校验结构与结果本身。
+    if expected_input_hash is not None and raw.get("input_hash") != expected_input_hash:
         return None
     candidate = raw.get("result")
     if not isinstance(candidate, dict):
@@ -1369,7 +1369,7 @@ def _validated_stage_record(
         return None
     return {
         "stage": stage,
-        "input_hash": expected_input_hash,
+        "input_hash": expected_input_hash if expected_input_hash is not None else raw.get("input_hash"),
         "result": candidate,
         "usage": _normalise_agent_usage(raw.get("usage")),
     }
@@ -1416,7 +1416,7 @@ def _decision_stage_from_result(
     stage: str,
     fields: Sequence[str],
     validator: Callable[[dict[str, Any]], dict[str, Any]],
-    expected_input_hash: str,
+    expected_input_hash: Optional[str],
 ) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError(f"decision stage {stage} must be an object")
@@ -1459,14 +1459,15 @@ def _validate_decision_proof(
     expected_path: str,
     primary_label: str,
     review_label: str,
+    strict_input_hash: bool = True,
 ) -> None:
     if value.get("decision_path") != expected_path:
         raise ValueError(f"decision_path must be {expected_path!r}")
     chain = value.get("decision_chain")
     if not isinstance(chain, list) or len(chain) != 3:
         raise ValueError("decision_chain must contain primary, independent review, and adjudication")
-    primary_hash = _stage_input_hash("primary", primary_prompt, source, primary_tool)
-    review_hash = _stage_input_hash("independent_review", review_prompt, source, review_tool)
+    primary_hash = _stage_input_hash("primary", primary_prompt, source, primary_tool) if strict_input_hash else None
+    review_hash = _stage_input_hash("independent_review", review_prompt, source, review_tool) if strict_input_hash else None
     primary = _decision_stage_from_result(
         chain[0], "primary", fields, validator, primary_hash
     )
@@ -1480,7 +1481,7 @@ def _validate_decision_proof(
         + review_label
         + json.dumps(review["result"], ensure_ascii=False, indent=2)
     )
-    final_hash = _stage_input_hash("final_adjudication", final_prompt, final_source, final_tool)
+    final_hash = _stage_input_hash("final_adjudication", final_prompt, final_source, final_tool) if strict_input_hash else None
     final = _decision_stage_from_result(
         chain[2], "final_adjudication", fields, validator, final_hash
     )
@@ -1903,6 +1904,7 @@ def _validate_performance_result(
         expected_path="blind_dual_direction_then_adjudication",
         primary_label="\n\nPRIMARY DIRECTION\n",
         review_label="\n\nINDEPENDENT DIRECTION\n",
+        strict_input_hash=strict_continuity,
     )
 
 
