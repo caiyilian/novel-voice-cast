@@ -2192,51 +2192,23 @@ def direct_all_performances(
             raw_results = payload.get("results", {})
             if expanded_checkpoint and isinstance(raw_results, dict):
                 legacy_completed: dict[int, dict[str, Any]] = {}
-                for dialogue_index in old_targets:
-                    value = raw_results.get(str(dialogue_index))
-                    if not isinstance(value, dict):
-                        break
-                    dialogue = index.dialogues[dialogue_index]
-                    speaker = str(dialogue.get("speaker", "")).strip()
-                    try:
-                        _validate_performance_result(
-                            value,
-                            dialogue_index,
-                            index,
-                            profiles[speaker],
-                            _emotion_public_view(emotion_results.get(str(dialogue_index), {})),
-                            legacy_completed,
-                            context_radius=context_radius,
-                            min_control_chars=min_control_chars,
-                            max_control_chars=max_control_chars,
-                        )
-                    except (TypeError, ValueError):
-                        break
-                    legacy_completed[dialogue_index] = value
+                for key, value in raw_results.items():
+                    if isinstance(value, dict):
+                        try:
+                            legacy_completed[int(key)] = value
+                        except (TypeError, ValueError):
+                            continue
                 expanded_reusable = legacy_completed
             elif isinstance(raw_results, dict):
-                for dialogue_index in target_indices:
-                    value = raw_results.get(str(dialogue_index))
-                    if not isinstance(value, dict):
-                        break
-                    dialogue = index.dialogues[dialogue_index]
-                    speaker = str(dialogue.get("speaker", "")).strip()
-                    try:
-                        _validate_performance_result(
-                            value,
-                            dialogue_index,
-                            index,
-                            profiles[speaker],
-                            _emotion_public_view(emotion_results.get(str(dialogue_index), {})),
-                            completed,
-                            context_radius=context_radius,
-                            min_control_chars=min_control_chars,
-                            max_control_chars=max_control_chars,
-                            strict_continuity=False,
-                        )
-                    except (TypeError, ValueError):
-                        break
-                    completed[dialogue_index] = value
+                # 兼容 checkpoint 全量恢复：逐条验证在并发结果上会因 continuity 误判而
+                # 丢弃整批成果（曾导致 2741 句被覆盖）。这里直接恢复，正确性交由最终
+                # validate_performance_payload 统一校验。
+                for key, value in raw_results.items():
+                    if isinstance(value, dict):
+                        try:
+                            completed[int(key)] = value
+                        except (TypeError, ValueError):
+                            continue
             errors = dict(payload.get("errors", {}))
             resumed_usage = _normalise_usage(payload.get("llm_usage", {}))
             raw_inflight = payload.get("inflight", {})
