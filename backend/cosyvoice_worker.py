@@ -122,7 +122,16 @@ def main(argv: list[str]) -> int:
                 if hasattr(speech, "shape") and len(speech.shape) == 2 and speech.shape[0] == 1:
                     speech = speech.squeeze(0)
                 os.makedirs(os.path.dirname(task["output_path"]) or ".", exist_ok=True)
-                torchaudio.save(temporary_wav, speech.unsqueeze(0), sample_rate)
+                # 显式存 PCM_16：torchaudio 默认编码随张量 dtype 变（float→FLOAT(float32)），
+                # 而 run_full 的 wave 模块校验读不了 float 格式，必须统一为 PCM_16。
+                # 传 float 张量时 torchaudio 会自动按 16bit 缩放，无需手工转换。
+                torchaudio.save(
+                    temporary_wav,
+                    speech.unsqueeze(0),
+                    sample_rate,
+                    encoding="PCM_S",
+                    bits_per_sample=16,
+                )
                 meta = _wav_meta(temporary_wav, torchaudio)
                 os.replace(temporary_wav, task["output_path"])
                 results[key] = {
