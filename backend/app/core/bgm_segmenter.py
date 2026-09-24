@@ -911,10 +911,122 @@ BGM_TYPE_MAP_ZH = {
 }
 BGM_TYPE_MAP_EN = {value: key for key, value in BGM_TYPE_MAP_ZH.items()}
 
+# ── 细分场景标签（scene_texture）────────────────────────────────────
+# 8 类情绪过于粗糙：占卜对话、赶路、集市都归为 daily，音乐必然趋同。
+# 增加一层「场景织体」标签，驱动 prompt 在乐器编制 / 节奏型 / 织体上分化。
+# 长音频（6 小时+）中，相邻段落即使同情绪也应换编制，否则听感会「一个调到底」。
+SCENE_TEXTURES: dict[str, tuple[str, ...]] = {
+    "daily": (
+        "market_bustle",      # 集市喧嚣、人群、叫卖
+        "travel_road",        # 赶路、行进、旅途
+        "indoor_talk",        # 室内静谈、对话、商量
+        "tavern",             # 酒馆、宴饮、喧闹
+        "village_calm",       # 村落日常、田园、安宁
+        "workshop",           # 劳作、打铁、手工、忙碌
+    ),
+    "suspense": (
+        "hidden_watch",       # 暗中窥探、跟踪、监视
+        "scheming",           # 密谋、算计、谈判博弈
+        "creeping_dread",     # 危机逼近、步步紧逼
+        "mystery_reveal",     # 疑云、线索、揭示前夜
+        "night_ambush",       # 夜袭、埋伏、屏息
+    ),
+    "battle": (
+        "melee_clash",        # 近身肉搏、刀剑相接
+        "chase",              # 追逐、奔逃
+        "standoff",           # 对峙、僵持、剑拔弩张
+        "aftermath",          # 战后退场、收拾残局
+    ),
+    "sad": (
+        "grief",              # 悲恸、哭别
+        "lonely_night",       # 孤独、长夜、独处
+        "regret",             # 悔恨、追忆
+        "parting",            # 离别、分手、远去
+    ),
+    "romantic": (
+        "tender_quiet",       # 温柔静谧、相依
+        "confession",         # 表白、心意相通
+        "playful_flirt",      # 调情、打趣、暧昧
+        "longing",            # 思念、渴望、未言明
+    ),
+    "epic": (
+        "grand_reveal",       # 宏大揭示、真相大白
+        "vast_journey",       # 壮阔旅途、天地辽阔
+        "ceremony",           # 仪式、典礼、庄严
+        "triumph",            # 凯旋、胜利、昂扬
+    ),
+    "comedy": (
+        "slapstick",          # 滑稽、闹剧、出丑
+        "banter",             # 斗嘴、调侃、插科打诨
+        "absurd",             # 荒诞、离奇、反差
+    ),
+    "horror": (
+        "uncanny",            # 诡异、不祥、错位
+        "monster",            # 怪物、威胁、血腥
+        "haunting",           # 萦绕、阴魂、挥之不去
+    ),
+}
+
+# 乐器编制池：用于跨段强制换编制（避免相邻段落同一套音色）。
+# 按情绪分组，保证风格适配的前提下最大化音色多样性。
+INSTRUMENTATION_POOLS: dict[str, tuple[str, ...]] = {
+    "daily": (
+        "solo nylon-string guitar with light shaker",
+        "wooden flute and plucked lute trading phrases",
+        "upright bass walking under brushed snare and accordion",
+        "hammered dulcimer with soft frame drum",
+        "clarinet and pizzicato strings",
+        "music box and muted guitar harmonics",
+    ),
+    "suspense": (
+        "low sustained cello drone with sparse prepared piano",
+        "muted tremolo strings and ticking woodblock",
+        "sub-bass pulses with detuned music box",
+        "solo bass clarinet over quiet cymbal washes",
+        "col legno strings and breathy low flute",
+    ),
+    "battle": (
+        "taiko ensemble with brass stabs and low strings",
+        "driving snare ostinato and distorted low brass",
+        "tribal frame drums with urgent string tremolo",
+        "war horns over galloping percussion",
+    ),
+    "sad": (
+        "solo piano with faint cello countermelody",
+        "solo violin with soft string pad",
+        "acoustic guitar and low bowed bass",
+        "celesta and muted strings",
+    ),
+    "romantic": (
+        "warm piano with light harp arpeggios",
+        "solo cello and gentle acoustic guitar",
+        "strings quartet with soft oboe",
+        "felt piano with subtle vibraphone",
+    ),
+    "epic": (
+        "full orchestra with french horns and timpani",
+        "soaring strings and choir-like pads",
+        "brass fanfare with deep percussion",
+        "layered strings and harp with low choir",
+    ),
+    "comedy": (
+        "bassoon and pizzicato strings",
+        "toy piano with kazoo-like reeds",
+        "tuba and clarinet with woodblock",
+        "banjo and jaw harp",
+    ),
+    "horror": (
+        "dissonant string cluster with low drone",
+        "prepared piano and reversed reverb textures",
+        "whining high strings and sub rumble",
+        "breathy dissonant flute and metallic scrapes",
+    ),
+}
+
 BGM_TYPE_PROMPT = """Act as a senior film-score music director for one audiobook scene.
 Classify its dominant musical function and write a production-ready English music
-brief for ACE-Step. The music must support spoken Chinese dialogue rather than compete
-with it. Base every choice on the supplied source, not generic genre keywords.
+brief for Stable Audio 3. The music must support spoken Chinese dialogue rather than
+compete with it. Base every choice on the supplied source, not generic genre keywords.
 - daily: relaxed, warm, conversational, routine, or reflective neutral life
 - suspense: uncertainty, investigation, hidden danger, scheming, or mounting tension
 - battle: active combat, chase, confrontation, or forceful kinetic action
@@ -924,11 +1036,24 @@ with it. Base every choice on the supplied source, not generic genre keywords.
 - comedy: a scene whose main function is humor, absurdity, teasing, or comic relief
 - horror: dread, grotesque threat, terror, or sustained uncanny fear
 
+Also pick ONE scene_texture that best matches the scene's concrete situation. It must
+belong to the chosen bgm_type's allowed list and it drives instrumentation choices:
+- daily: market_bustle, travel_road, indoor_talk, tavern, village_calm, workshop
+- suspense: hidden_watch, scheming, creeping_dread, mystery_reveal, night_ambush
+- battle: melee_clash, chase, standoff, aftermath
+- sad: grief, lonely_night, regret, parting
+- romantic: tender_quiet, confession, playful_flirt, longing
+- epic: grand_reveal, vast_journey, ceremony, triumph
+- comedy: slapstick, banter, absurd
+- horror: uncanny, monster, haunting
+
 Use the source excerpt over the title. Classify atmosphere, not isolated keywords.
 Consider neighboring segments to maintain score continuity while preserving genuine
-transitions. The English music_prompt must specify mood, period-appropriate
-instrumentation, texture, dynamics, tempo feel, and a beginning-to-end dramatic arc.
-Keep music_prompt concise: target 140-300 characters and never exceed 420 characters.
+transitions. The English music_prompt must read as flowing descriptive prose (not a
+comma-separated tag list) and must specify genre, concrete instrumentation, texture,
+dynamics, tempo feel, and a beginning-to-end dramatic arc. Aim for 300-600 characters;
+longer, more specific prompts produce better and more varied music. Do NOT copy a
+template - vary the vocabulary, instrument choices, and phrasing from scene to scene.
 Keep instrumentation and key_mode as compact production labels. Keep avoid under 180
 characters and reserve it for unwanted musical/audio traits rather than explanations.
 It must request an instrumental, sparse dialogue underscore with no vocals, lyrics,
@@ -947,9 +1072,13 @@ TYPE_TOOL = [{
             {
                 "segment_index": {"type": "integer", "minimum": 1},
                 "bgm_type": {"type": "string", "enum": list(BGM_TYPES)},
+                "scene_texture": {
+                    "type": "string",
+                    "enum": sorted({t for pool in SCENE_TEXTURES.values() for t in pool}),
+                },
                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                 "evidence": {"type": "string", "minLength": 1},
-                "music_prompt": {"type": "string", "minLength": 80, "maxLength": 420},
+                "music_prompt": {"type": "string", "minLength": 120, "maxLength": 900},
                 "instrumentation": {"type": "string", "minLength": 4, "maxLength": 240},
                 "tempo_bpm": {"type": "integer", "minimum": 40, "maximum": 180},
                 "key_mode": {"type": "string", "minLength": 2, "maxLength": 80},
@@ -965,7 +1094,7 @@ TYPE_TOOL = [{
                 "avoid": {"type": "string", "minLength": 4, "maxLength": 240},
             },
             [
-                "segment_index", "bgm_type", "confidence", "evidence",
+                "segment_index", "bgm_type", "scene_texture", "confidence", "evidence",
                 "music_prompt", "instrumentation", "tempo_bpm", "key_mode",
                 "energy", "narrative_arc", "transition", "avoid",
             ],
@@ -1212,6 +1341,7 @@ def label_bgm_types(
         output[zero_index].update({
             "bgm_type": decision["bgm_type"],
             "bgm_type_zh": BGM_TYPE_MAP_ZH[decision["bgm_type"]],
+            "bgm_scene_texture": decision.get("scene_texture", ""),
             "bgm_confidence": decision["confidence"],
             "bgm_evidence": decision["evidence"],
             "bgm_music_prompt": decision["music_prompt"],
@@ -1279,6 +1409,8 @@ MUSIC_PROMPT_SAFETY_SUFFIX = (
     "a coherent beginning-to-end arc, and no vocals, lyrics, spoken words, sound effects, or oversized trailer impacts."
 )
 AVOID_SAFETY_SUFFIX = "vocals, lyrics, spoken words, sound effects, and oversized trailer impacts"
+# Stable Audio 3 无 ACE-Step 的 500 字符 caption 上限，放宽以承载更细的场景描述。
+MUSIC_PROMPT_MAX_CHARS = 900
 
 
 def _truncate_text_at_word(value: str, max_chars: int) -> str:
@@ -1289,14 +1421,18 @@ def _truncate_text_at_word(value: str, max_chars: int) -> str:
 
 
 def _fit_music_prompt_length(music_prompt: str, fallback: str) -> str:
+    """Stable Audio 3 没有 ACE-Step 的 500 字符上限，放宽到 900 以保留更多细节。
+
+    更长的场景化描述能显著提升音乐多样性（避免同类场景趋同）。
+    """
     prompt = re.sub(r"\s+", " ", music_prompt).strip() or fallback
     if len(prompt) < 80:
         prompt = f"{prompt.rstrip(' ,;:.')}. {MUSIC_PROMPT_SAFETY_SUFFIX}"
-    if len(prompt) > 420:
-        head_budget = 420 - len(MUSIC_PROMPT_SAFETY_SUFFIX) - 2
+    if len(prompt) > MUSIC_PROMPT_MAX_CHARS:
+        head_budget = MUSIC_PROMPT_MAX_CHARS - len(MUSIC_PROMPT_SAFETY_SUFFIX) - 2
         head = _truncate_text_at_word(prompt, head_budget)
         prompt = f"{head}. {MUSIC_PROMPT_SAFETY_SUFFIX}"
-    return prompt[:420].rstrip()
+    return prompt[:MUSIC_PROMPT_MAX_CHARS].rstrip()
 
 
 def _fit_bounded_text(value: str, fallback: str, min_chars: int, max_chars: int) -> str:
@@ -1399,6 +1535,13 @@ def _validate_bgm_type(
     narrative_arc = str(raw.get("narrative_arc", defaults["narrative_arc"]))
     transition = str(raw.get("transition", defaults["transition"]))
     avoid = re.sub(r"\s+", " ", str(raw.get("avoid", defaults["avoid"]))).strip()
+    # scene_texture：LLM 未给出或给错时回退到该情绪的第一个细分标签（不因此整条失败）
+    raw_texture = str(raw.get("scene_texture", "")).strip()
+    allowed_textures = SCENE_TEXTURES.get(bgm_type, ())
+    if raw_texture not in allowed_textures:
+        scene_texture = allowed_textures[0] if allowed_textures else ""
+    else:
+        scene_texture = raw_texture
     repaired_fields: list[str] = []
     if repair_fields:
         repaired_values = {
@@ -1430,8 +1573,11 @@ def _validate_bgm_type(
         return None, "confidence must be between 0 and 1"
     if len(evidence) < 4:
         return None, "evidence is too short"
-    if not 80 <= len(music_prompt) <= 420:
-        return None, f"music_prompt must contain 80..420 characters (got {len(music_prompt)})"
+    if not 80 <= len(music_prompt) <= MUSIC_PROMPT_MAX_CHARS:
+        return None, (
+            f"music_prompt must contain 80..{MUSIC_PROMPT_MAX_CHARS} characters "
+            f"(got {len(music_prompt)})"
+        )
     if not 4 <= len(instrumentation) <= 240:
         return None, f"instrumentation must contain 4..240 characters (got {len(instrumentation)})"
     if not 40 <= tempo_bpm <= 180:
@@ -1449,6 +1595,7 @@ def _validate_bgm_type(
     return {
         "segment_index": index,
         "bgm_type": bgm_type,
+        "scene_texture": scene_texture,
         "confidence": confidence,
         "evidence": evidence,
         "music_prompt": music_prompt,

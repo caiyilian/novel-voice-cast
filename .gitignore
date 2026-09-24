@@ -82,3 +82,12 @@ config/llm_proxy_key
 
 # WorkBuddy workspace memory
 .workbuddy/
+
+# 试听片段
+_preview/
+
+# 一次性实验脚本
+scripts/archive/
+
+# 含内网服务器地址，禁止提交
+_upload_models.sh
