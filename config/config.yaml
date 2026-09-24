@@ -130,19 +130,14 @@ bgm:
   force_label: false               # 重新标注 BGM 类型
   force_generate: false            # 重新生成 BGM 音频
   segmentation_chunks: 24          # 更细的音乐场景，约每 12-24 个源行审视一次换乐
-  # SFT + 5Hz LM 路径在本机实测退化为高度同质的节律噪声；恢复已验证能成曲的纯 DiT 路径。
-  model: "acestep-v15-turbo"
-  lm_model: "acestep-5Hz-lm-1.7B"
-  thinking: false                   # 禁用语义音频码路径，直接由 DiT 生成完整音乐
-  lm_backend: "vllm"               # Windows 不兼容时 ACE-Step 会自动退回 PyTorch
-  cpu_offload: false                # turbo 在 12GB 显存可常驻；避免反复 CPU/GPU 搬运
-  guidance_scale: 7.0
-  clips_per_segment: 3
-  clip_duration: 60                 # 每场景三条 60 秒变奏，显著减少短循环重复
-  inference_steps: 8                # turbo 的原生采样步数（模型会忽略 CFG）
-  clip_attempts: 3                  # 静音、截断或坏文件自动换 seed 重试
-  proxy: "http://127.0.0.1:7890"   # 首次下载 ACE-Step 权重时使用
-  generation_timeout: 1209600       # BGM 长跑最多 14 天
+  # 引擎：stable-audio-3（自然语言 prompt，纯器乐，44.1kHz 立体声）
+  # 旧引擎 ACE-Step 已弃用（prompt 约束严、出曲同质）
+  engine: "stable-audio-3"
+  model: "small-music"             # small-music(2.7s/90s) 或 medium(22s/90s，音质更好)
+  steps: 8                         # post-trained 模型的原生采样步数
+  # 每场景 4 条 × 90 秒：210 场景 → 840 条，6 小时音频不重复
+  clips_per_segment: 4
+  clip_duration: 90
   volume_db: -8.0                  # BGM 全局音量（dB，负值越小越安静）
 
 illustrations:

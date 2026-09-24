@@ -118,7 +118,14 @@ def main(argv: list[str]) -> int:
                     chunks.append(item["tts_speech"])
                 if not chunks:
                     raise RuntimeError("CosyVoice produced no speech")
-                speech = chunks[0]
+                # CosyVoice 对长文本会按 token_max_n 切分并逐块 yield（前端 split_paragraph）。
+                # 必须拼接【全部】块，只取 chunks[0] 会丢掉后半段内容（实测长句覆盖率仅 0.4-0.8）。
+                if len(chunks) == 1:
+                    speech = chunks[0]
+                else:
+                    import torch
+
+                    speech = torch.cat(chunks, dim=-1)
                 if hasattr(speech, "shape") and len(speech.shape) == 2 and speech.shape[0] == 1:
                     speech = speech.squeeze(0)
                 os.makedirs(os.path.dirname(task["output_path"]) or ".", exist_ok=True)
