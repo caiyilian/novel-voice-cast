@@ -120,13 +120,19 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         "whisper_model": str(args.whisper_model),
         "transcripts": {},
     }
-    if out_path.is_file() and not args.force:
+    # 总是先加载已有结果，避免 --force 时把未涉及的条目丢掉。
+    # --force 的语义是「重跑本次指定的 indices」，不是「清空整个文件」。
+    if out_path.is_file():
         try:
             old = json.loads(out_path.read_text(encoding="utf-8"))
             if old.get("quality_pipeline_version") == QUALITY_PIPELINE_VERSION:
                 store["transcripts"] = old.get("transcripts", {})
         except Exception:
             pass
+
+    if args.force:
+        for i in indices:
+            store["transcripts"].pop(str(i), None)
 
     pending = [i for i in indices if str(i) not in store["transcripts"]]
     print(f"待转录: {len(pending)} / {len(indices)}（已完成 {len(indices)-len(pending)}）", flush=True)
@@ -400,24 +406,61 @@ def cmd_audit(args: argparse.Namespace) -> int:
                       f"LEAK={counts['LEAK']} MISMATCH={counts['MISMATCH']} ERR={counts['ERROR']}", flush=True)
 
     records.sort(key=lambda r: r["index"])
+
+    # 与已有报告合并：本次只审了部分 indices 时，不能把其他条目丢掉。
+    report_path = Path(args.report)
+    merged: dict[int, dict[str, Any]] = {}
+    if report_path.is_file():
+        try:
+            old = json.loads(report_path.read_text(encoding="utf-8"))
+            if old.get("quality_pipeline_version") == QUALITY_PIPELINE_VERSION:
+                for r in old.get("records") or []:
+                    merged[int(r["index"])] = r
+        except Exception:
+            pass
+    for r in records:
+        merged[int(r["index"])] = r
+
+    all_records = [merged[k] for k in sorted(merged)]
+    all_failed: dict[int, dict[str, Any]] = {}
+    if report_path.is_file():
+        try:
+            old = json.loads(report_path.read_text(encoding="utf-8"))
+            for item in old.get("untranscribed") or []:
+                all_failed[int(item["index"])] = item
+        except Exception:
+            pass
+    for item in failed:
+        all_failed[int(item["index"])] = item
+    # 本次成功审到的条目若原先记在 untranscribed，要移除
+    for r in records:
+        all_failed.pop(int(r["index"]), None)
+
+    total_counts: dict[str, int] = {"OK": 0, "LEAK": 0, "MISMATCH": 0, "ERROR": 0}
+    for r in all_records:
+        total_counts[r["verdict"]] = total_counts.get(r["verdict"], 0) + 1
+
     report = {
         "quality_pipeline_version": QUALITY_PIPELINE_VERSION,
-        "audited": len(records),
-        "counts": counts,
-        "untranscribed": failed,
-        "records": records,
+        "audited": len(all_records),
+        "last_batch": len(records),
+        "counts": total_counts,
+        "untranscribed": [all_failed[k] for k in sorted(all_failed)],
+        "records": all_records,
     }
-    Path(args.report).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n判定完成 -> {args.report}", flush=True)
-    print(f"  OK={counts['OK']}  LEAK={counts['LEAK']}  MISMATCH={counts['MISMATCH']}  ERROR={counts['ERROR']}", flush=True)
+    print(f"  本轮 {len(records)} 条 | 报告累计 {len(all_records)} 条", flush=True)
+    print(f"  累计：OK={total_counts['OK']}  LEAK={total_counts['LEAK']}  "
+          f"MISMATCH={total_counts['MISMATCH']}  ERROR={total_counts['ERROR']}", flush=True)
     if failed:
-        print(f"  ⚠ 未转录（未参与判定）{len(failed)} 条：", flush=True)
+        print(f"  ⚠ 本轮未转录（未参与判定）{len(failed)} 条：", flush=True)
         for item in failed[:20]:
             print(f"    idx {item['index']}: {item['reason']}", flush=True)
         if len(failed) > 20:
             print(f"    ... 另有 {len(failed)-20} 条", flush=True)
     # 有 ERROR 或未转录都必须返回非零，绝不当作通过
-    if counts["ERROR"] or failed:
+    if total_counts["ERROR"] or all_failed:
         return 1
     return 0
 

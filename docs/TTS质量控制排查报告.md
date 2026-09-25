@@ -92,6 +92,54 @@ min_len = int((text_len - prompt_text_len) * min_text_ratio)
 拿 5 句实测泄漏的句子，新旧 instruct 各重跑 3 次 → **30/30 全部干净**
 → 说明**泄漏可随机自愈**，重跑是最简单有效的修复
 
+### 实验 5：采样参数（否证「调 temperature」假说）
+
+**动机**：用户提问「能否通过修改 temperature 参数反复重试解决泄漏」。
+
+**先查源码，发现 CosyVoice 根本没有 temperature**。采样链路是：
+
+```python
+# cosyvoice/utils/common.py:138
+def ras_sampling(scores, tokens, sampling, top_p=0.8, top_k=25, win_size=10, tau_r=0.1):
+    top_ids = nucleus_sampling(scores, top_p=top_p, top_k=top_k)   # top-p + top-k 截断
+    if 重复检测触发:
+        top_ids = random_sampling(...)                            # 兜底随机
+
+def nucleus_sampling(scores, top_p=0.8, top_k=25):
+    ...
+    top_ids = indices[prob.multinomial(1, replacement=True)].item()   # multinomial 随机抽取
+```
+
+注意 `inference(..., sampling=25)` 的 `sampling` **名字有误导性**——它只在
+「检测到重复」的兜底路径使用，不是温度。采样函数由 `cosyvoice3.yaml:32`
+（`!name:cosyvoice.utils.common.ras_sampling`）注入，可在运行时替换。
+
+**实验设计**：用**原始散文 instruct**（已知会泄漏的那批，而非已改写的元指令，
+否则分不清是采样参数还是提示词起作用），3 句 × 3 次 × 4 组参数。
+
+| 采样参数 | 泄漏率 |
+|---|---|
+| A 默认 `top_p=0.8, top_k=25` | **3/9 = 33%** |
+| B 收紧 `top_p=0.6, top_k=10` | **3/9 = 33%** |
+| C 很紧 `top_p=0.3, top_k=3` | **3/9 = 33%** |
+| D **贪婪** `top_p=0.01, top_k=1` | **3/9 = 33%** |
+
+**结论：连 `top_k=1`（完全贪心、零随机）都仍是 33%，采样参数对泄漏率毫无影响。**
+
+**更关键的观察**：泄漏与**句子强相关**，与参数无关——
+- `idx 20` 在**全部四组**里都泄漏（9/9）
+- `idx 21`、`idx 525` 在所有组里基本不泄漏
+
+**为什么必然如此**：回到根因 `llm.py:476`——instruct 与正文被拼成同一序列，
+模型判断「该不该结束」看的是**语义**而非随机性。`idx 20` 的 instruct 以
+「…四字短促笃定收尾。」结尾，是**完整的陈述句**，模型读起来就是「正文还没念完」，
+因此贪心解码也会继续念。
+
+**因此**：
+- ❌ 调 temperature / top_p / top_k → **无效**
+- ✅ **原样重试** → 有效（实验 4：30/30）
+- ✅ **改写为极简元指令** → 最有效（7.5 节：6/6，覆盖率 1.00）
+
 ---
 
 ## 五、★ 真正的大 bug：worker 只取 chunks[0]
@@ -300,6 +348,16 @@ L489: "...得意透出一线含笑了然即敛..."
 | 详细导演散文（原版） | 82-127 字 | 80% | ✅ |
 | 元指令 + 声学参数 | 51 字 | 0%（单次实验） | ✅ |
 | **极简元指令** | **~25 字** | **0%（6/6）** | **✅ 覆盖率 1.00** |
+
+**三种干预手段的有效性**（按实测）：
+
+| 手段 | 有效性 | 依据 |
+|---|---|---|
+| 调 temperature / top_p / top_k | ❌ **无效**（33% 不变，贪婪解码同样泄漏） | 实验 5 |
+| 原样重试 | ✅ 有效（30/30） | 实验 4 |
+| 改写为极简元指令 | ✅✅ 最有效（6/6，覆盖率 1.00） | 7.5 节 |
+
+→ **推荐组合**：极简指令治本 + 重试兜底（即 `tts_fix_loop.py` 现有流程）。
 
 ### 9.2 待用户决策
 
