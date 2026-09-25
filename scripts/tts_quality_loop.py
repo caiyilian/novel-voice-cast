@@ -316,6 +316,60 @@ def _audit_one(
     return _call_tool(client, AUDIT_SYSTEM_PROMPT, user, AUDIT_TOOL, 0.0)
 
 
+def _merge_records(
+    report_path: Path, records: list[dict[str, Any]], failed: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """把本轮结果与已有报告合并，返回完整报告对象。"""
+    merged: dict[int, dict[str, Any]] = {}
+    all_failed: dict[int, dict[str, Any]] = {}
+    if report_path.is_file():
+        try:
+            old = json.loads(report_path.read_text(encoding="utf-8"))
+            if old.get("quality_pipeline_version") == QUALITY_PIPELINE_VERSION:
+                for r in old.get("records") or []:
+                    merged[int(r["index"])] = r
+                for item in old.get("untranscribed") or []:
+                    all_failed[int(item["index"])] = item
+        except Exception:
+            pass
+    for r in records:
+        merged[int(r["index"])] = r
+    for item in failed:
+        all_failed[int(item["index"])] = item
+    # 本次成功审到的条目若原先记在 untranscribed，要移除
+    for r in records:
+        all_failed.pop(int(r["index"]), None)
+
+    all_records = [merged[k] for k in sorted(merged)]
+    total_counts: dict[str, int] = {"OK": 0, "LEAK": 0, "MISMATCH": 0, "ERROR": 0}
+    for r in all_records:
+        total_counts[r["verdict"]] = total_counts.get(r["verdict"], 0) + 1
+
+    return {
+        "quality_pipeline_version": QUALITY_PIPELINE_VERSION,
+        "audited": len(all_records),
+        "last_batch": len(records),
+        "counts": total_counts,
+        "untranscribed": [all_failed[k] for k in sorted(all_failed)],
+        "records": all_records,
+    }
+
+
+def _flush_report(
+    report_path: Path, records: list[dict[str, Any]], failed: list[dict[str, Any]], merge: bool = True
+) -> dict[str, Any]:
+    """把当前进度落盘（长任务被中断时不丢已完成部分）。"""
+    report = _merge_records(report_path, records, failed) if merge else {
+        "quality_pipeline_version": QUALITY_PIPELINE_VERSION,
+        "audited": len(records),
+        "counts": {},
+        "untranscribed": failed,
+        "records": records,
+    }
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
+
+
 def cmd_audit(args: argparse.Namespace) -> int:
     """全量 LLM 判定（并发）。字符级比对仅作为参考信息随附。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -373,6 +427,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
         )
 
     print(f"待审核: {len(pending)} 条（并发 {args.workers}）", flush=True)
+    report_path = Path(args.report)
     client = LLMClient.for_flash_lite("tts_quality_audit")
     counts = {"OK": 0, "LEAK": 0, "MISMATCH": 0, "ERROR": 0}
     records: list[dict[str, Any]] = []
@@ -404,53 +459,17 @@ def cmd_audit(args: argparse.Namespace) -> int:
             if done % 100 == 0:
                 print(f"  进度 {done}/{len(pending)}  OK={counts['OK']} "
                       f"LEAK={counts['LEAK']} MISMATCH={counts['MISMATCH']} ERR={counts['ERROR']}", flush=True)
+            # 增量落盘：长任务被中断时不丢已完成的判定
+            if done % 200 == 0:
+                _flush_report(report_path, records, failed, merge=True)
 
     records.sort(key=lambda r: r["index"])
+    report = _flush_report(report_path, records, failed, merge=True)
+    total_counts = report["counts"]
+    all_failed = report["untranscribed"]
 
-    # 与已有报告合并：本次只审了部分 indices 时，不能把其他条目丢掉。
-    report_path = Path(args.report)
-    merged: dict[int, dict[str, Any]] = {}
-    if report_path.is_file():
-        try:
-            old = json.loads(report_path.read_text(encoding="utf-8"))
-            if old.get("quality_pipeline_version") == QUALITY_PIPELINE_VERSION:
-                for r in old.get("records") or []:
-                    merged[int(r["index"])] = r
-        except Exception:
-            pass
-    for r in records:
-        merged[int(r["index"])] = r
-
-    all_records = [merged[k] for k in sorted(merged)]
-    all_failed: dict[int, dict[str, Any]] = {}
-    if report_path.is_file():
-        try:
-            old = json.loads(report_path.read_text(encoding="utf-8"))
-            for item in old.get("untranscribed") or []:
-                all_failed[int(item["index"])] = item
-        except Exception:
-            pass
-    for item in failed:
-        all_failed[int(item["index"])] = item
-    # 本次成功审到的条目若原先记在 untranscribed，要移除
-    for r in records:
-        all_failed.pop(int(r["index"]), None)
-
-    total_counts: dict[str, int] = {"OK": 0, "LEAK": 0, "MISMATCH": 0, "ERROR": 0}
-    for r in all_records:
-        total_counts[r["verdict"]] = total_counts.get(r["verdict"], 0) + 1
-
-    report = {
-        "quality_pipeline_version": QUALITY_PIPELINE_VERSION,
-        "audited": len(all_records),
-        "last_batch": len(records),
-        "counts": total_counts,
-        "untranscribed": [all_failed[k] for k in sorted(all_failed)],
-        "records": all_records,
-    }
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n判定完成 -> {args.report}", flush=True)
-    print(f"  本轮 {len(records)} 条 | 报告累计 {len(all_records)} 条", flush=True)
+    print(f"  本轮 {len(records)} 条 | 报告累计 {report['audited']} 条", flush=True)
     print(f"  累计：OK={total_counts['OK']}  LEAK={total_counts['LEAK']}  "
           f"MISMATCH={total_counts['MISMATCH']}  ERROR={total_counts['ERROR']}", flush=True)
     if failed:
