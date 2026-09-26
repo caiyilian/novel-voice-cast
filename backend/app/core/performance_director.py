@@ -410,9 +410,23 @@ PERFORMANCE_RULES = """Hard line-direction rules:
    negative boundary only when it materially protects an intense line from shouting,
    advertising cadence, cartoon acting, or distortion.
 6. emphasis entries must be exact nonempty substrings of the target dialogue. An empty list
-   is correct when no word deserves special stress.
+   is correct when no word deserves special stress. This exactness applies ONLY to the
+   structured emphasis field, never to performance_control prose.
 7. performance_control must be natural Chinese, contain no outer parentheses or newline,
    and be directly usable as: (performance_control)target text.
+7b. CRITICAL — performance_control must not quote the target text. The TTS engine
+   concatenates performance_control and the target text into ONE sequence, so any run of
+   3+ consecutive characters shared with the target text can make the model believe the
+   target has not started yet and read the instruction aloud. Measured leak rate rises
+   monotonically with the longest shared run (0 chars: 0.0%; 3-4 chars: 1.1-1.3%;
+   5-8+ chars: 1.6-3.3%). Therefore:
+   - Never copy a word or phrase from the target text into performance_control.
+   - Refer to positions instead: 句首词组 / 句尾单字 / 第二分句动词 / 句中时间短语 /
+     转折词 / 句尾四字短语 / 句首叹词 / 数量词. These locate the same words without
+     sharing their characters.
+   - Avoid quotation marks (「」『』) in performance_control entirely.
+   - Describing emphasis by position ("重音落在句尾四字短语") preserves full acting
+     detail while keeping the shared-character run at zero.
 8. Continuity memory is prior direction, not source truth. Preserve it only when current
    evidence supports continuity; explicitly reset or contrast when the scene changes.
 9. The compact emotion label is advisory and may be corrected by source evidence.
@@ -438,7 +452,11 @@ PERFORMANCE_FINAL_PROMPT = (
     "You are the final VoxCPM performance prompt engineer and senior acting director. "
     "Compare both independent plans against the source, keep the best executable details, "
     "remove unsupported or conflicting instructions, and deliver one coherent control that "
-    "will preserve natural cloned speech.\n\n" + PERFORMANCE_RULES
+    "will preserve natural cloned speech. Before submitting, verify that performance_control "
+    "shares no run of 3 or more consecutive characters with the target text; if it does, "
+    "replace that quoted wording with an equivalent positional reference (句首/句尾/第N分句/"
+    "动词短语/时间短语/转折词/四字短语) so the acting detail survives but the characters do "
+    "not.\n\n" + PERFORMANCE_RULES
 )
 
 PROFILE_PROMPT_SIGNATURE = hashlib.sha256(
