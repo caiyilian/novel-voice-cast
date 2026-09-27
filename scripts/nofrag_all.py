@@ -236,12 +236,42 @@ def stage_gen(batch: int, workers: int) -> int:
     repo = str(resolve_path(cv["repo_path"]))
     model_dir = str(resolve_path(cv["model_path"]))
 
+    # 以 checkpoint 的当前 instruct_text 为准（唯一真相源）。
+    # 不能直接用 rw[...]["rewritten"]：instruct 可能被后续阶段（如压缩）再次修改。
+    def current_instruct(i: int) -> str:
+        return str(by[i].get("instruct_text", "")) or str(rw.get(str(i), {}).get("rewritten", ""))
+
+    # 完成判定必须基于「instruct 内容指纹」，而不是「文件是否存在」。
+    # 因为 instruct 可能被后续阶段改写（如压缩），此时旧 wav 仍在磁盘上，
+    # 但内容已不是当前 instruct 的产物 —— 只看文件存在性会误判为已完成。
+    # 用 manifest 记录「index -> instruct 的 sha256」，不匹配即需重生成。
+    import hashlib as _hl
+
+    manifest_path = PROJECT_ROOT / "output" / "_nofrag_manifest.json"
+    manifest: dict[str, str] = {}
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            manifest = {}
+
+    def instruct_hash(i: int) -> str:
+        return _hl.sha256(current_instruct(i).encode("utf-8")).hexdigest()[:16]
+
     done: set[int] = set()
-    if GEN_RESULTS.is_file():
-        done = {int(k) for k, v in json.loads(GEN_RESULTS.read_text(encoding="utf-8")).get("results", {}).items()
-                if v.get("status") == "ok"}
+    for k in rw:
+        i = int(k)
+        if i not in by:
+            continue
+        p = Path(by[i]["audio_path"])
+        if not (p.is_file() and p.stat().st_size > 0):
+            continue
+        if manifest.get(str(i)) == instruct_hash(i):
+            done.add(i)
     todo = sorted(int(k) for k in rw if int(k) not in done)
-    print(f"待重生成 {len(todo)} 条（已完成 {len(done)}）\n", flush=True)
+    stale = sum(1 for k in rw if int(k) in by and Path(by[int(k)]["audio_path"]).is_file()
+                and int(k) not in done)
+    print(f"待重生成 {len(todo)} 条（指纹匹配 {len(done)}，内容已过期 {stale}）\n", flush=True)
 
     for s in range(0, len(todo), batch):
         chunk = todo[s : s + batch]
@@ -256,7 +286,7 @@ def stage_gen(batch: int, workers: int) -> int:
                 "index": i, "text": texts.get(i, ""), "output_path": str(p),
                 "fingerprint": rec.get("fingerprint", ""),
                 "reference_audio": str(rp if rp.is_absolute() else PROJECT_ROOT / rp),
-                "instruct_text": rw[str(i)]["rewritten"],
+                "instruct_text": current_instruct(i),
             })
         spec = {"tasks": tasks, "repo_path": repo, "model_path": model_dir,
                 "results_path": f"output/_nofrag_b{chunk[0]}.json",
@@ -270,9 +300,14 @@ def stage_gen(batch: int, workers: int) -> int:
             merged = json.loads(GEN_RESULTS.read_text(encoding="utf-8")) if GEN_RESULTS.is_file() else {"results": {}}
             merged["results"].update(json.loads(rp2.read_text(encoding="utf-8")).get("results", {}))
             GEN_RESULTS.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
-        ok = sum(1 for v in json.loads(GEN_RESULTS.read_text(encoding="utf-8"))["results"].values()
-                 if v.get("status") == "ok")
-        print(f"  累计成功 {ok}", flush=True)
+        # 为真正生成成功的条目登记 instruct 指纹
+        for i in chunk:
+            p = Path(by[i]["audio_path"])
+            if p.is_file() and p.stat().st_size > 0:
+                manifest[str(i)] = instruct_hash(i)
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        have = len(done) + sum(1 for i in chunk if Path(by[i]["audio_path"]).is_file())
+        print(f"  已完成 {have}/{len(rw)}", flush=True)
     print("重生成完成", flush=True)
     return 0
 
