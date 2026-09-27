@@ -99,9 +99,18 @@ def main(argv: list[str]) -> int:
 
     for position, task in enumerate(tasks, 1):
         key = str(task.get("task_key", task["index"]))
-        if results.get(key, {}).get("status") == "ok":
+        # 缓存判定必须同时满足「记录为 ok」且「输出文件真实存在」。
+        # 仅看记录会在两种情况下误判：
+        #   1. instruct 被后续阶段改写，旧 wav 已失效（内容不再是当前 instruct 的产物）
+        #   2. 文件被外部清理，但结果 JSON 仍留着 ok 记录
+        prior_ok = results.get(key, {}).get("status") == "ok"
+        out_path = task.get("output_path")
+        file_ok = bool(out_path) and os.path.isfile(out_path) and os.path.getsize(out_path) > 0
+        if prior_ok and file_ok:
             print(f"CosyVoice [{position}/{len(tasks)}] key={key} status=cached", flush=True)
             continue
+        if prior_ok and not file_ok:
+            print(f"CosyVoice [{position}/{len(tasks)}] key={key} status=stale(文件缺失，重新生成)", flush=True)
         last_error = None
         temporary_wav = task["output_path"] + f".{os.getpid()}.tmp.wav"
         for attempt in range(1, task_attempts + 1):
