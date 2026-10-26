@@ -29,7 +29,7 @@ characters:
   # 主角
   "罗伦斯": "backend/data/presets/demo_male.mp3"
   "劳伦斯": "backend/data/presets/demo_male.mp3"
-  "赫萝": "backend/data/presets/holo_speech_only.wav"  # 提取语音部分，去掉静音
+  "赫萝": "backend/data/presets/design_female_gentle.wav"  # 中文女声；holo_speech_only.wav 是日语版，已弃用
 
 # 默认音频（根据性别）
 default_audio:
